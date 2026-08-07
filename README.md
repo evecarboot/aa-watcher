@@ -153,14 +153,34 @@ a `custom.dockerfile` that builds the AA image, a `conf/` folder with
 in front of that for TLS. Adjust container/service names below if yours
 differ.
 
+### 0. Get this repo's `deploy/` files onto your server
+
+The commands below reference `deploy/docker-compose.mediamtx.yml`,
+`deploy/mediamtx-docker.yml`, and `deploy/nginx-intel-watcher-docker.conf` -
+these live in *this* GitHub repo, not in your Alliance Auth project, so
+grab them first. From the same directory as your `docker-compose.yml`:
+
+```bash
+mkdir -p deploy
+curl -o deploy/docker-compose.mediamtx.yml https://raw.githubusercontent.com/evecarboot/aa-watcher/main/deploy/docker-compose.mediamtx.yml
+curl -o deploy/mediamtx-docker.yml https://raw.githubusercontent.com/evecarboot/aa-watcher/main/deploy/mediamtx-docker.yml
+curl -o deploy/nginx-intel-watcher-docker.conf https://raw.githubusercontent.com/evecarboot/aa-watcher/main/deploy/nginx-intel-watcher-docker.conf
+```
+
+(Or `git clone` this repo anywhere and copy its `deploy/` folder over - either
+way, you just need those 3 files sitting in `./deploy/` next to your
+`docker-compose.yml`.)
+
 ### 1. Get the app into the Alliance Auth image
 
 This app isn't published to PyPI, so add a line to `conf/requirements.txt`
 (the same file `custom.dockerfile` already uses for other extra apps like
-`aa-discordnotify`) pointing straight at the public GitHub repo:
+`aa-discordnotify`) pointing straight at the public GitHub repo. This
+command is safe to run more than once - it only adds the line if it isn't
+already there:
 
-```
-git+https://github.com/evecarboot/aa-watcher.git@main
+```bash
+grep -qxF 'git+https://github.com/evecarboot/aa-watcher.git@main' conf/requirements.txt || echo 'git+https://github.com/evecarboot/aa-watcher.git@main' >> conf/requirements.txt
 ```
 
 Rebuild and recreate the containers that run Alliance Auth code
@@ -176,18 +196,35 @@ docker compose up -d
 
 Since `conf/local.py` is already bind-mounted into the container at
 `myauth/settings/local.py`, just edit it on the host like any other AA
-setting - no rebuild needed for this step, only a container restart:
+setting - no rebuild needed for this step, only a container restart. The
+tricky part normally is that the same secret has to end up in two places
+(`local.py` and MediaMTX's config) and stay in sync - this generates one
+random secret and writes it to both `conf/local.py` **and** the `.env`
+file MediaMTX will read in step 3, in one go:
 
-```python
+```bash
+SECRET=$(openssl rand -hex 32)
+echo "Your secret is: $SECRET"
+
+cat >> conf/local.py <<EOF
+
+# --- aa-intel-watcher ---
 INSTALLED_APPS += ["aa_intel_watcher"]
-
-# Must match the nginx `location /hls/` configured in step 4 below.
 INTEL_WATCHER_HLS_BASE_URL = "/hls"
+INTEL_WATCHER_MEDIAMTX_SECRET = "$SECRET"
+EOF
 
-# Long random string (e.g. `openssl rand -hex 32`), must match the same
-# variable in the .env file used in step 3 below.
-INTEL_WATCHER_MEDIAMTX_SECRET = "generate-a-long-random-string-here"
+if grep -q '^INTEL_WATCHER_MEDIAMTX_SECRET=' .env 2>/dev/null; then
+  sed -i "s/^INTEL_WATCHER_MEDIAMTX_SECRET=.*/INTEL_WATCHER_MEDIAMTX_SECRET=$SECRET/" .env
+else
+  echo "INTEL_WATCHER_MEDIAMTX_SECRET=$SECRET" >> .env
+fi
 ```
+
+Run `tail -5 conf/local.py` afterwards to double check those lines landed
+cleanly. `INTEL_WATCHER_HLS_BASE_URL` must match the nginx `location /hls/`
+configured in step 4 below (`/hls` is the default used throughout this
+README, so leave it as-is unless you changed that).
 
 ### 3. Migrate, collect static, and add MediaMTX
 
@@ -201,13 +238,6 @@ so this is done with a management command instead:
 docker compose exec allianceauth_gunicorn python manage.py fetch_hls_js
 docker compose exec allianceauth_gunicorn python manage.py migrate aa_intel_watcher
 docker compose exec allianceauth_gunicorn python manage.py collectstatic --noinput
-```
-
-Add `INTEL_WATCHER_MEDIAMTX_SECRET` (the same value used in `local.py`
-above) to a `.env` file next to your `docker-compose.yml`:
-
-```
-INTEL_WATCHER_MEDIAMTX_SECRET=<paste the same value used in local.py>
 ```
 
 Then add MediaMTX as its own container on the same compose project, using
