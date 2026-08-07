@@ -24,9 +24,9 @@
         anyUnmutedYet = true;
     }
 
-    function createTile(stream) {
+    function createTile(stream, totalStreams) {
         const col = document.createElement("div");
-        col.className = "col-12 col-md-6 iw-tile";
+        col.className = totalStreams > 1 ? "col-12 col-md-6 iw-tile" : "col-12 iw-tile";
 
         const ratio = document.createElement("div");
         ratio.className = "ratio ratio-16x9 bg-black";
@@ -38,6 +38,15 @@
         video.controls = true;
         ratio.appendChild(video);
         col.appendChild(ratio);
+
+        const tryPlay = () => {
+            const p = video.play();
+            if (p && typeof p.catch === "function") {
+                p.catch(() => {
+                    video.addEventListener("loadedmetadata", () => video.play().catch(() => {}), { once: true });
+                });
+            }
+        };
 
         const label = document.createElement("div");
         label.className = "d-flex justify-content-between align-items-center mt-1";
@@ -63,11 +72,11 @@
             const hls = new window.Hls();
             hls.loadSource(stream.hls_url);
             hls.attachMedia(video);
-            hls.on(window.Hls.Events.MANIFEST_PARSED, () => video.play());
+            hls.on(window.Hls.Events.MANIFEST_PARSED, tryPlay);
             tile.hls = hls;
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
             video.src = stream.hls_url;
-            video.play();
+            tryPlay();
         }
 
         return tile;
@@ -98,8 +107,14 @@
                 // Add tiles for newly live streams.
                 streams.forEach((stream) => {
                     if (!tiles.has(stream.hls_url)) {
-                        tiles.set(stream.hls_url, createTile(stream));
+                        tiles.set(stream.hls_url, createTile(stream, streams.length));
                     }
+                });
+
+                // Resize existing tiles if the live-stream count changed.
+                const tileClass = streams.length > 1 ? "col-12 col-md-6 iw-tile" : "col-12 iw-tile";
+                tiles.forEach((tile) => {
+                    tile.el.className = tileClass;
                 });
 
                 emptyState.classList.toggle("d-none", streams.length > 0);
