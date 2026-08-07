@@ -1,5 +1,7 @@
 # aa-intel-watcher
 
+Compatible with Alliance Auth 4.x and 5.x (tested against 5.2).
+
 Alliance Auth app that adds a corp/alliance-only "Intel Watcher" section:
 members can stream from OBS to it, and it's viewable only by logged-in
 Alliance Auth users with the right permission - no YouTube/Twitch, no
