@@ -87,18 +87,13 @@
         tile.el.remove();
     }
 
-    function updateGridLayout(streamCount) {
-        const isSingle = streamCount <= 1;
-
-        grid.classList.toggle("iw-video-grid--single", isSingle);
-        grid.classList.toggle("iw-video-grid--multi", !isSingle);
+    function updateGridLayout() {
         grid.style.width = "100%";
-        grid.style.gridTemplateColumns = isSingle
-            ? "minmax(0, 1fr)"
-            : "repeat(auto-fit, minmax(24rem, 1fr))";
 
         tiles.forEach((tile) => {
             tile.el.style.width = "100%";
+            tile.el.style.maxWidth = "100%";
+            tile.el.style.flexBasis = tiles.size > 1 ? "24rem" : "100%";
         });
     }
 
@@ -124,7 +119,7 @@
                     }
                 });
 
-                updateGridLayout(streams.length);
+                updateGridLayout();
                 emptyState.classList.toggle("d-none", streams.length > 0);
 
                 // Auto solo the first stream so the very first viewer isn't
@@ -137,7 +132,7 @@
             .catch(() => {});
     }
 
-    updateGridLayout(0);
+    updateGridLayout();
     refreshStatus();
     setInterval(refreshStatus, 8000);
 })();

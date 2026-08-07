@@ -7,22 +7,21 @@
 }
 
 .iw-video-grid {
-    display: grid;
+    display: flex;
+    flex-wrap: wrap;
     gap: 1rem;
     width: 100%;
-}
-
-.iw-video-grid--single {
-    grid-template-columns: minmax(0, 1fr);
-}
-
-.iw-video-grid--multi {
-    grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
 }
 
 .iw-tile {
     min-width: 0;
     width: 100%;
+    flex: 1 1 100%;
+    max-width: 100%;
+}
+
+.iw-video-grid > .iw-tile:not(:only-child) {
+    flex: 1 1 24rem;
 }
 
 .iw-tile .ratio {
@@ -49,7 +48,7 @@
 }
 
 @media (max-width: 575.98px) {
-    .iw-video-grid--multi {
-        grid-template-columns: minmax(0, 1fr);
+    .iw-video-grid > .iw-tile:not(:only-child) {
+        flex-basis: 100%;
     }
 }
