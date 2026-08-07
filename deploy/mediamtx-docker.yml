@@ -22,7 +22,7 @@ hlsSegmentCount: 4
 hlsSegmentDuration: 1s
 # Fine to leave open - only the `nginx` container (not browsers) ever
 # reaches this address directly.
-hlsAllowOrigin: "*"
+hlsAllowOrigins: ["*"]
 
 # Every publish attempt (OBS connecting) is validated against Alliance Auth.
 authMethod: http
@@ -34,8 +34,11 @@ paths:
     # them as live. CHANGE_ME is filled in automatically from your .env's
     # INTEL_WATCHER_MEDIAMTX_SECRET by the mediamtx-config helper container -
     # it must match the value set in Alliance Auth's local.py.
-    runOnUnpublish: >
+    #
+    # NOTE: MediaMTX renamed this hook from runOnUnpublish to runOnUnavailable
+    # (formerly runOnNotReady before that) - there's no separate "Restart"
+    # flag for it since it's a one-shot notification, not a long-running command.
+    runOnUnavailable: >
       curl -s -X POST http://allianceauth_gunicorn:8000/intel-watcher/hooks/unpublish/
       -H "X-Webhook-Secret: CHANGE_ME"
       --data-urlencode "path=$MTX_PATH"
-    runOnUnpublishRestart: no

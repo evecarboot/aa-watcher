@@ -52,8 +52,13 @@ class StreamKey(models.Model):
 
     @property
     def path_name(self):
-        """MediaMTX / RTMP path name for this user's stream."""
-        return f"stream_{self.user_id}"
+        """MediaMTX / RTMP path name for this user's stream.
+
+        OBS is configured with Server=rtmp://host:1935/live and
+        Stream Key=<key>, so the path MediaMTX actually publishes to is
+        "live/<key>" - keep this in sync with that.
+        """
+        return f"live/{self.key}"
 
 
 class ChatMessage(models.Model):

@@ -14,7 +14,7 @@ hlsVariant: mpegts
 hlsSegmentCount: 4
 hlsSegmentDuration: 1s
 # Locking this to localhost is fine since nginx (not browsers) talks to it.
-hlsAllowOrigin: "*"
+hlsAllowOrigins: ["*"]
 
 # Every publish attempt (OBS connecting) is validated against Alliance Auth.
 authMethod: http
@@ -25,8 +25,11 @@ paths:
     # Notify Alliance Auth when a streamer stops, so the page stops showing
     # them as live. Replace CHANGE_ME with the value you set for
     # INTEL_WATCHER_MEDIAMTX_SECRET in Alliance Auth's local settings.
-    runOnUnpublish: >
+    #
+    # NOTE: MediaMTX renamed this hook from runOnUnpublish to runOnUnavailable
+    # (formerly runOnNotReady before that) - there's no separate "Restart"
+    # flag for it since it's a one-shot notification, not a long-running command.
+    runOnUnavailable: >
       curl -s -X POST http://127.0.0.1:8000/intel-watcher/hooks/unpublish/
       -H "X-Webhook-Secret: CHANGE_ME"
       --data-urlencode "path=$MTX_PATH"
-    runOnUnpublishRestart: no

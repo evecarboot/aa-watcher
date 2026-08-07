@@ -144,7 +144,14 @@ def mediamtx_publish_auth(request):
         # Only gate publishing here; reading is gated separately by nginx.
         return JsonResponse({"ok": True})
 
+    # RTMP only populates `user`/`password` if OBS is configured with
+    # ?user=&pass= query params, which we don't require - OBS is instead
+    # configured with the stream key as the RTMP path itself (see
+    # streamer_info.html and StreamKey.path_name), so fall back to that.
     stream_key_value = payload.get("user") or ""
+    if not stream_key_value:
+        stream_key_value = (payload.get("path") or "").rsplit("/", 1)[-1]
+
     try:
         stream_key = StreamKey.objects.select_related("user").get(key=stream_key_value)
     except StreamKey.DoesNotExist:
@@ -173,10 +180,9 @@ def mediamtx_unpublish(request):
         return HttpResponseForbidden("bad secret")
 
     path = request.POST.get("path", "")
-    try:
-        user_id = int(path.removeprefix("stream_"))
-    except ValueError:
+    stream_key_value = path.rsplit("/", 1)[-1]
+    if not stream_key_value:
         return HttpResponseForbidden("bad path")
 
-    StreamKey.objects.filter(user_id=user_id).update(is_live=False)
+    StreamKey.objects.filter(key=stream_key_value).update(is_live=False)
     return JsonResponse({"ok": True})
