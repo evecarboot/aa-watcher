@@ -140,6 +140,8 @@ def mediamtx_publish_auth(request):
     except ValueError:
         return HttpResponseForbidden("bad payload")
 
+    logger.info("Intel Watcher: publish-auth payload: %s", payload)
+
     if payload.get("action") != "publish":
         # Only gate publishing here; reading is gated separately by nginx.
         return JsonResponse({"ok": True})
@@ -166,6 +168,11 @@ def mediamtx_publish_auth(request):
         return HttpResponseForbidden("not approved to stream")
 
     stream_key.go_live()
+    logger.info(
+        "Intel Watcher: go_live() called for %s, is_live now %s",
+        stream_key.user,
+        stream_key.is_live,
+    )
     return JsonResponse({"ok": True})
 
 
