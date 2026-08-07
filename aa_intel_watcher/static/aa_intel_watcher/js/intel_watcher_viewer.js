@@ -23,9 +23,11 @@
     function createTile(stream, totalStreams) {
         const col = document.createElement("div");
         col.className = "iw-tile";
+        col.style.width = "100%";
 
         const ratio = document.createElement("div");
         ratio.className = "ratio ratio-16x9 bg-black";
+        ratio.style.width = "100%";
 
         const video = document.createElement("video");
         video.autoplay = true;
@@ -86,8 +88,18 @@
     }
 
     function updateGridLayout(streamCount) {
-        grid.classList.toggle("iw-video-grid--single", streamCount <= 1);
-        grid.classList.toggle("iw-video-grid--multi", streamCount > 1);
+        const isSingle = streamCount <= 1;
+
+        grid.classList.toggle("iw-video-grid--single", isSingle);
+        grid.classList.toggle("iw-video-grid--multi", !isSingle);
+        grid.style.width = "100%";
+        grid.style.gridTemplateColumns = isSingle
+            ? "minmax(0, 1fr)"
+            : "repeat(auto-fit, minmax(24rem, 1fr))";
+
+        tiles.forEach((tile) => {
+            tile.el.style.width = "100%";
+        });
     }
 
     function refreshStatus() {
