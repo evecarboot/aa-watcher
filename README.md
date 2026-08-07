@@ -88,19 +88,17 @@ differ enough that it gets its own section.
    INTEL_WATCHER_MEDIAMTX_SECRET = "generate-a-long-random-string-here"
    ```
 
-3. Run migrations and collect static files:
+3. Fetch `hls.js` (pinned version, checksum-verified, written straight into
+   this app's own static folder - see `README_VENDOR_HLS.txt` in that
+   folder), then run migrations and collect static files:
 
    ```bash
+   python manage.py fetch_hls_js
    python manage.py migrate aa_intel_watcher
    python manage.py collectstatic
    ```
 
-4. Download `hls.js` and place it at
-   `aa_intel_watcher/static/aa_intel_watcher/js/hls.min.js` (see the
-   `README_VENDOR_HLS.txt` in that folder) - this keeps the whole stack
-   self-hosted with no external CDN request when members load the page.
-
-5. In the Django admin, grant:
+4. In the Django admin, grant:
    - `aa_intel_watcher | general | Can access the Intel Watcher page`
      (`basic_access`) to your corp/alliance member group(s).
    - `aa_intel_watcher | general | Can broadcast a stream to the Intel
@@ -186,37 +184,47 @@ INSTALLED_APPS += ["aa_intel_watcher"]
 # Must match the nginx `location /hls/` configured in step 4 below.
 INTEL_WATCHER_HLS_BASE_URL = "/hls"
 
-# Long random string, must match the mediamtx.yml runOnUnpublish hook
-# added in step 3.
+# Long random string (e.g. `openssl rand -hex 32`), must match the same
+# variable in the .env file used in step 3 below.
 INTEL_WATCHER_MEDIAMTX_SECRET = "generate-a-long-random-string-here"
 ```
 
 ### 3. Migrate, collect static, and add MediaMTX
 
+Fetch `hls.js` (pinned version, checksum-verified) straight into wherever
+`aa_intel_watcher` is installed inside the container, migrate, and collect
+static - since this app is `pip install`ed from GitHub instead of
+bind-mounted, there's no host file path to drop `hls.min.js` into by hand,
+so this is done with a management command instead:
+
 ```bash
+docker compose exec allianceauth_gunicorn python manage.py fetch_hls_js
 docker compose exec allianceauth_gunicorn python manage.py migrate aa_intel_watcher
 docker compose exec allianceauth_gunicorn python manage.py collectstatic --noinput
 ```
 
-Download `hls.js` and place it at
-`aa_intel_watcher/static/aa_intel_watcher/js/hls.min.js` (see
-`README_VENDOR_HLS.txt` in that folder) **before** running `collectstatic`
-above, so it ends up in the shared `static-volume`.
+Add `INTEL_WATCHER_MEDIAMTX_SECRET` (the same value used in `local.py`
+above) to a `.env` file next to your `docker-compose.yml`:
 
-Add MediaMTX as its own container on the same compose project, using
+```
+INTEL_WATCHER_MEDIAMTX_SECRET=<paste the same value used in local.py>
+```
+
+Then add MediaMTX as its own container on the same compose project, using
 [deploy/docker-compose.mediamtx.yml](deploy/docker-compose.mediamtx.yml)
-as an overlay (or copy its `mediamtx:` service block straight into your
+as an overlay (or copy both its service blocks straight into your
 existing `docker-compose.yml`):
 
 ```bash
 docker compose -f docker-compose.yml -f deploy/docker-compose.mediamtx.yml up -d
 ```
 
-Copy [deploy/mediamtx-docker.yml](deploy/mediamtx-docker.yml) (not the
-bare-metal `deploy/mediamtx.yml`) to `./conf/mediamtx.yml` and fill in
-`INTEL_WATCHER_MEDIAMTX_SECRET`'s value in the `runOnUnpublish` line - it
-already targets Alliance Auth via the `allianceauth_gunicorn` Docker DNS
-name instead of `127.0.0.1`, since MediaMTX now runs in its own container.
+That overlay includes a small one-shot helper container that fills your
+secret into [deploy/mediamtx-docker.yml](deploy/mediamtx-docker.yml) (not
+the bare-metal `deploy/mediamtx.yml`) and writes the result to
+`./conf/mediamtx.yml` for you on every `up` - no manual copying/editing of
+that file, and no keeping the same secret in sync by hand across two
+files.
 
 ### 4. nginx
 
@@ -244,7 +252,7 @@ HLS port (`8888`); only the `nginx` container should reach that, over the
 internal docker network.
 
 Grant the `basic_access`/`can_stream` permissions the same way as the
-bare-metal install (see step 5 in [Install (bare metal / virtualenv)](#install-bare-metal--virtualenv)
+bare-metal install (see step 4 in [Install (bare metal / virtualenv)](#install-bare-metal--virtualenv)
 above).
 
 ### Updating later
@@ -256,9 +264,13 @@ fresh pull of it and rebuild (pip's git support caches by default, so
 ```bash
 docker compose build --no-cache allianceauth_gunicorn allianceauth_worker allianceauth_beat allianceauth_worker_services allianceauth_discordbot
 docker compose up -d
+docker compose exec allianceauth_gunicorn python manage.py fetch_hls_js
 docker compose exec allianceauth_gunicorn python manage.py migrate aa_intel_watcher
 docker compose exec allianceauth_gunicorn python manage.py collectstatic --noinput
 ```
+
+(`fetch_hls_js` skips the download if it's already present, so this is
+safe to re-run every time.)
 
 ## OBS setup (for approved streamers)
 

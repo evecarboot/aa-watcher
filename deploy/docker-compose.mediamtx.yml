@@ -5,19 +5,46 @@
 # container by service name (Docker's built-in DNS) and be reached by the
 # `nginx` container the same way - no host networking/127.0.0.1 involved.
 #
+# Before running this, put the secret in a `.env` file next to your
+# docker-compose.yml (same value you set for INTEL_WATCHER_MEDIAMTX_SECRET
+# in local.py):
+#   INTEL_WATCHER_MEDIAMTX_SECRET=<output of: openssl rand -hex 32>
+#
 # Usage (run from the same directory as your Alliance Auth docker-compose.yml):
 #   docker compose -f docker-compose.yml -f deploy/docker-compose.mediamtx.yml up -d
 #
-# Or merge the `mediamtx:` service block below directly into your existing
+# Or merge both service blocks below directly into your existing
 # docker-compose.yml if you'd rather not juggle two `-f` flags.
 
 services:
+  # One-shot helper: substitutes INTEL_WATCHER_MEDIAMTX_SECRET into
+  # deploy/mediamtx-docker.yml and writes the result to ./conf/mediamtx.yml -
+  # no more manually copying/editing that file or keeping the secret in sync
+  # by hand. Re-runs (and overwrites ./conf/mediamtx.yml) on every `up`, so
+  # make other edits in deploy/mediamtx-docker.yml, not ./conf/mediamtx.yml.
+  mediamtx-config:
+    image: alpine:3.20
+    container_name: mediamtx-config
+    restart: "no"
+    environment:
+      - INTEL_WATCHER_MEDIAMTX_SECRET=${INTEL_WATCHER_MEDIAMTX_SECRET:?Set INTEL_WATCHER_MEDIAMTX_SECRET in a .env file next to this docker-compose.yml first (same value as in local.py) - see README.md}
+    volumes:
+      - ./deploy/mediamtx-docker.yml:/template/mediamtx.yml:ro
+      - ./conf:/out
+    command:
+      - sh
+      - -c
+      - sed "s#CHANGE_ME#$$INTEL_WATCHER_MEDIAMTX_SECRET#" /template/mediamtx.yml > /out/mediamtx.yml && echo "Wrote ./conf/mediamtx.yml"
+
   mediamtx:
     image: bluenviron/mediamtx:latest
     container_name: mediamtx
     restart: always
+    depends_on:
+      mediamtx-config:
+        condition: service_completed_successfully
     volumes:
-      - ./conf/mediamtx.yml:/mediamtx.yml
+      - ./conf/mediamtx.yml:/mediamtx.yml:ro
     ports:
       # RTMP - OBS needs to reach this directly, so it's published to the
       # host/public interface. Prefer restricting this to your corp's VPN

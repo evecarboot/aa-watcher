@@ -1,6 +1,11 @@
-# MediaMTX config sample for aa-intel-watcher - DOCKER variant.
-# Mount this at ./conf/mediamtx.yml (matching the volume in
-# docker-compose.mediamtx.yml) in your Alliance Auth docker-compose project.
+# MediaMTX config template for aa-intel-watcher - DOCKER variant.
+#
+# You don't need to copy or edit this file by hand: the `mediamtx-config`
+# helper container in docker-compose.mediamtx.yml reads this file, replaces
+# CHANGE_ME with your INTEL_WATCHER_MEDIAMTX_SECRET (from .env), and writes
+# the result to ./conf/mediamtx.yml automatically on every `docker compose
+# up`. Edit this template if you need to change anything else about
+# MediaMTX's config.
 #
 # The only difference from deploy/mediamtx.yml (bare metal) is that Alliance
 # Auth is reached via its Docker Compose service name (`allianceauth_gunicorn`)
@@ -26,8 +31,9 @@ authHTTPAddress: http://allianceauth_gunicorn:8000/intel-watcher/hooks/publish-a
 paths:
   all:
     # Notify Alliance Auth when a streamer stops, so the page stops showing
-    # them as live. Replace CHANGE_ME with the value you set for
-    # INTEL_WATCHER_MEDIAMTX_SECRET in Alliance Auth's local settings.
+    # them as live. CHANGE_ME is filled in automatically from your .env's
+    # INTEL_WATCHER_MEDIAMTX_SECRET by the mediamtx-config helper container -
+    # it must match the value set in Alliance Auth's local.py.
     runOnUnpublish: >
       curl -s -X POST http://allianceauth_gunicorn:8000/intel-watcher/hooks/unpublish/
       -H "X-Webhook-Secret: CHANGE_ME"
