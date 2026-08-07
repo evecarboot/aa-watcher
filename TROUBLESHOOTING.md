@@ -1,7 +1,6 @@
 # Intel Watcher — Troubleshooting Log
 
-This document records the bugs found and fixed while getting live HLS video
-working end-to-end at `https://auth.banr.online/intel-watcher/`, along with
+This document records the bugs found and fixed along with
 the debugging techniques that found them. Keep it updated as new issues are
 found.
 
