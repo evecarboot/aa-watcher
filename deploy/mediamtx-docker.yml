@@ -18,7 +18,7 @@ hls: yes
 hlsAddress: :8888
 hlsAlwaysRemux: yes
 hlsVariant: mpegts
-hlsSegmentCount: 4
+hlsSegmentCount: 3
 hlsSegmentDuration: 1s
 # Fine to leave open - only the `nginx` container (not browsers) ever
 # reaches this address directly.

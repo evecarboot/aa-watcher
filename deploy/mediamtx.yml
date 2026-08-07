@@ -11,7 +11,7 @@ hls: yes
 hlsAddress: :8888
 hlsAlwaysRemux: yes
 hlsVariant: mpegts
-hlsSegmentCount: 4
+hlsSegmentCount: 3
 hlsSegmentDuration: 1s
 # Locking this to localhost is fine since nginx (not browsers) talks to it.
 hlsAllowOrigins: ["*"]

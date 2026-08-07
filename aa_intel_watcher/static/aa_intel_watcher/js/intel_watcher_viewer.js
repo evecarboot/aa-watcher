@@ -4,6 +4,15 @@
     const cfg = window.INTEL_WATCHER;
     const grid = document.getElementById("iw-video-grid");
     const emptyState = document.getElementById("iw-empty-state");
+    const STATUS_POLL_MS = 3000;
+    const HLS_CONFIG = {
+        lowLatencyMode: true,
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 3,
+        maxLiveSyncPlaybackRate: 1.5,
+        enableWorker: true,
+        backBufferLength: 30,
+    };
 
     // hls_url -> { el, video, hls }
     const tiles = new Map();
@@ -33,7 +42,12 @@
         video.autoplay = true;
         video.playsInline = true;
         video.muted = true;
+        video.defaultMuted = true;
         video.controls = true;
+        video.preload = "auto";
+        video.setAttribute("autoplay", "autoplay");
+        video.setAttribute("muted", "muted");
+        video.setAttribute("playsinline", "playsinline");
         ratio.appendChild(video);
         col.appendChild(ratio);
 
@@ -67,13 +81,16 @@
         soloBtn.addEventListener("click", () => soloAudio(stream.hls_url));
 
         if (window.Hls && window.Hls.isSupported()) {
-            const hls = new window.Hls();
+            const hls = new window.Hls(HLS_CONFIG);
+            hls.on(window.Hls.Events.MEDIA_ATTACHED, tryPlay);
             hls.loadSource(stream.hls_url);
             hls.attachMedia(video);
             hls.on(window.Hls.Events.MANIFEST_PARSED, tryPlay);
             tile.hls = hls;
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
             video.src = stream.hls_url;
+            video.addEventListener("loadedmetadata", tryPlay, { once: true });
+            video.addEventListener("canplay", tryPlay, { once: true });
             tryPlay();
         }
 
@@ -134,6 +151,6 @@
 
     updateGridLayout();
     refreshStatus();
-    setInterval(refreshStatus, 8000);
+    setInterval(refreshStatus, STATUS_POLL_MS);
 })();
 
