@@ -7,10 +7,16 @@
     const STATUS_POLL_MS = 3000;
     const HLS_CONFIG = {
         lowLatencyMode: true,
-        liveSyncDurationCount: 1,
-        liveMaxLatencyDurationCount: 3,
-        maxLiveSyncPlaybackRate: 1.5,
+        // Bias toward starting playback quickly and staying stable on slower
+        // connections, rather than forcing the viewer as close to live as possible.
+        startLevel: 0,
+        testBandwidth: false,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 6,
+        maxLiveSyncPlaybackRate: 1.2,
         enableWorker: true,
+        capLevelToPlayerSize: true,
+        maxBufferLength: 10,
         backBufferLength: 30,
     };
 
