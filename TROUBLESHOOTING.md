@@ -18,10 +18,10 @@ found.
   fronting both Alliance Auth (`location /`) and MediaMTX's HLS output
   (`location /hls/`), gated by an internal `auth_request` sub-check against
   Alliance Auth's `api_status` view.
-- **Cloudflare** proxies `auth.banr.online` (TLS terminates at Cloudflare;
-  origin nginx only ever sees plain HTTP). `media.banr.online` is **not**
+- **Cloudflare** proxies `auth.example.com` (TLS terminates at Cloudflare;
+  origin nginx only ever sees plain HTTP). `media.example.com` is **not**
   proxied by Cloudflare (direct DNS to the droplet), which is why direct HLS
-  playback at `http://media.banr.online:8888/...` always worked and was
+  playback at `http://media.example.com:8888/...` always worked and was
   useful as a "known-good" sanity check throughout this debugging.
 
 ## Bug 1 — `is_live` never flips to `True`
@@ -70,7 +70,7 @@ step: the first request to an HLS path gets a `302` with a **relative**
 `/hls/` prefix — this is normal MediaMTX behavior, confirmed by curling
 MediaMTX directly, bypassing nginx). The browser resolved that relative
 redirect against the *current page's* origin, landing on
-`https://auth.banr.online/live/...` (missing the `/hls/` prefix nginx uses
+`https://auth.example.com/live/...` (missing the `/hls/` prefix nginx uses
 to route to MediaMTX), which Django doesn't route → 404. An intermediate
 fix attempt correctly added the `/hls/` prefix but kept `http://`, which the
 browser then blocked as mixed content on the HTTPS page.
