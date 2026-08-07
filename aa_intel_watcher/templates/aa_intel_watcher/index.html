@@ -9,7 +9,10 @@
 {% endblock %}
 
 {% block iw_javascript %}
-    <script src="{% static 'aa_intel_watcher/js/hls.min.js' %}"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/hls.js@1.6.15/dist/hls.min.js"
+        integrity="sha256-QTqD4rsMd+0L8L4QXVOdF+9F39mEoLE+zTsUqQE4OTg="
+        crossorigin="anonymous"></script>
     <script>
         window.INTEL_WATCHER = {
             statusUrl: "{% url 'aa_intel_watcher:api_status' %}"
