@@ -6,7 +6,7 @@
     const emptyState = document.getElementById("iw-empty-state");
     const STATUS_POLL_MS = 3000;
     const DRIFT_CHECK_INTERVAL_MS = 2000;
-    const DRIFT_SNAP_THRESHOLD_SEC = 8;
+    const DRIFT_SNAP_THRESHOLD_SEC = 12;
     const DRIFT_TARGET_BEHIND_LIVE_SEC = 1.5;
     const HLS_CONFIG = {
         lowLatencyMode: true,
