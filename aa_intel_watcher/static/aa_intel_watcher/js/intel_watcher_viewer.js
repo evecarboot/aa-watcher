@@ -5,22 +5,25 @@
     const grid = document.getElementById("iw-video-grid");
     const emptyState = document.getElementById("iw-empty-state");
     const STATUS_POLL_MS = 3000;
+    const DRIFT_CHECK_INTERVAL_MS = 2000;
+    const DRIFT_SNAP_THRESHOLD_SEC = 8;
+    const DRIFT_TARGET_BEHIND_LIVE_SEC = 1.5;
     const HLS_CONFIG = {
         lowLatencyMode: true,
         // Bias toward starting playback quickly and staying stable on slower
         // connections, rather than forcing the viewer as close to live as possible.
         startLevel: 0,
         testBandwidth: false,
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 6,
+        liveSyncDurationCount: 4,
+        liveMaxLatencyDurationCount: 8,
         maxLiveSyncPlaybackRate: 1.2,
         enableWorker: true,
         capLevelToPlayerSize: true,
-        maxBufferLength: 10,
-        backBufferLength: 30,
+        maxBufferLength: 16,
+        backBufferLength: 60,
     };
 
-    // hls_url -> { el, video, hls }
+    // hls_url -> { el, video, hls, driftTimer }
     const tiles = new Map();
     let anyUnmutedYet = false;
 
@@ -35,7 +38,70 @@
         anyUnmutedYet = true;
     }
 
-    function createTile(stream, totalStreams) {
+    function bindPlaybackRecovery(video, tryPlay) {
+        // Browser decoders occasionally enter stalled/waiting states on
+        // rough links; this nudges playback to resume once data appears.
+        video.addEventListener("stalled", tryPlay);
+        video.addEventListener("waiting", tryPlay);
+        video.addEventListener("canplay", tryPlay);
+    }
+
+    function bindHlsRecovery(hls, video, streamUrl, tryPlay) {
+        const HlsEvents = window.Hls.Events;
+        const HlsErrorTypes = window.Hls.ErrorTypes;
+
+        hls.on(HlsEvents.ERROR, (_event, data) => {
+            if (!data || !data.fatal) {
+                return;
+            }
+
+            if (data.type === HlsErrorTypes.NETWORK_ERROR) {
+                hls.startLoad();
+                return;
+            }
+
+            if (data.type === HlsErrorTypes.MEDIA_ERROR) {
+                hls.recoverMediaError();
+                tryPlay();
+                return;
+            }
+
+            // Last resort for unrecoverable errors.
+            hls.destroy();
+            video.src = streamUrl;
+            video.addEventListener("loadedmetadata", tryPlay, { once: true });
+            tryPlay();
+        });
+    }
+
+    function snapNearLive(video) {
+        if (video.paused || video.seeking || video.readyState < 2) {
+            return;
+        }
+
+        if (!video.seekable || video.seekable.length < 1) {
+            return;
+        }
+
+        const lastRange = video.seekable.length - 1;
+        const liveEdge = video.seekable.end(lastRange);
+        const liveStart = video.seekable.start(lastRange);
+        if (!Number.isFinite(liveEdge) || !Number.isFinite(video.currentTime)) {
+            return;
+        }
+
+        const drift = liveEdge - video.currentTime;
+        if (drift <= DRIFT_SNAP_THRESHOLD_SEC) {
+            return;
+        }
+
+        const target = Math.max(liveEdge - DRIFT_TARGET_BEHIND_LIVE_SEC, liveStart);
+        if (target > video.currentTime) {
+            video.currentTime = target;
+        }
+    }
+
+    function createTile(stream) {
         const col = document.createElement("div");
         col.className = "iw-tile";
         col.style.width = "100%";
@@ -66,11 +132,13 @@
             }
         };
 
+        bindPlaybackRecovery(video, tryPlay);
+
         const label = document.createElement("div");
-    label.className = "iw-tile-meta";
+        label.className = "iw-tile-meta";
 
         const name = document.createElement("span");
-    name.className = "iw-tile-name";
+        name.className = "iw-tile-name";
         name.textContent = stream.display_name;
         label.appendChild(name);
 
@@ -83,7 +151,13 @@
         col.appendChild(label);
         grid.appendChild(col);
 
-        const tile = { el: col, video, hls: null, soloBtn };
+        const tile = {
+            el: col,
+            video,
+            hls: null,
+            soloBtn,
+            driftTimer: setInterval(() => snapNearLive(video), DRIFT_CHECK_INTERVAL_MS)
+        };
         soloBtn.addEventListener("click", () => soloAudio(stream.hls_url));
 
         if (window.Hls && window.Hls.isSupported()) {
@@ -92,6 +166,7 @@
             hls.loadSource(stream.hls_url);
             hls.attachMedia(video);
             hls.on(window.Hls.Events.MANIFEST_PARSED, tryPlay);
+            bindHlsRecovery(hls, video, stream.hls_url, tryPlay);
             tile.hls = hls;
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
             video.src = stream.hls_url;
@@ -100,10 +175,15 @@
             tryPlay();
         }
 
+        video.addEventListener("canplay", () => snapNearLive(video));
+
         return tile;
     }
 
     function destroyTile(tile) {
+        if (tile.driftTimer) {
+            clearInterval(tile.driftTimer);
+        }
         if (tile.hls) {
             tile.hls.destroy();
         }
@@ -138,7 +218,7 @@
                 // Add tiles for newly live streams.
                 streams.forEach((stream) => {
                     if (!tiles.has(stream.hls_url)) {
-                        tiles.set(stream.hls_url, createTile(stream, streams.length));
+                        tiles.set(stream.hls_url, createTile(stream));
                     }
                 });
 
