@@ -2,10 +2,36 @@
     font-weight: 600;
 }
 
+.iw-viewer-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(18rem, 24vw, 22rem);
+    gap: 1rem;
+    align-items: start;
+}
+
+.iw-viewer-main {
+    min-width: 0;
+}
+
+.iw-viewer-sidebar {
+    min-width: 0;
+}
+
+#iw-video-grid > .iw-tile:only-child {
+    flex: 0 0 100%;
+    max-width: 100%;
+}
+
 .iw-tile video {
     width: 100%;
     height: 100%;
     background: #000;
+}
+
+@media (max-width: 991.98px) {
+    .iw-viewer-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }
 
 #iw-chat-log {
