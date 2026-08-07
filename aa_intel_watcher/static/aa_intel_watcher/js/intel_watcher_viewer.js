@@ -4,13 +4,9 @@
     const cfg = window.INTEL_WATCHER;
     const grid = document.getElementById("iw-video-grid");
     const emptyState = document.getElementById("iw-empty-state");
-    const chatLog = document.getElementById("iw-chat-log");
-    const chatForm = document.getElementById("iw-chat-form");
-    const chatInput = document.getElementById("iw-chat-input");
 
     // hls_url -> { el, video, hls }
     const tiles = new Map();
-    let lastChatId = 0;
     let anyUnmutedYet = false;
 
     function soloAudio(key) {
@@ -26,7 +22,7 @@
 
     function createTile(stream, totalStreams) {
         const col = document.createElement("div");
-        col.className = totalStreams > 1 ? "col-12 col-md-6 iw-tile" : "col-12 iw-tile";
+        col.className = "iw-tile";
 
         const ratio = document.createElement("div");
         ratio.className = "ratio ratio-16x9 bg-black";
@@ -49,10 +45,10 @@
         };
 
         const label = document.createElement("div");
-        label.className = "d-flex justify-content-between align-items-center mt-1";
+    label.className = "iw-tile-meta";
 
         const name = document.createElement("span");
-        name.className = "fw-semibold";
+    name.className = "iw-tile-name";
         name.textContent = stream.display_name;
         label.appendChild(name);
 
@@ -89,6 +85,11 @@
         tile.el.remove();
     }
 
+    function updateGridLayout(streamCount) {
+        grid.classList.toggle("iw-video-grid--single", streamCount <= 1);
+        grid.classList.toggle("iw-video-grid--multi", streamCount > 1);
+    }
+
     function refreshStatus() {
         fetch(cfg.statusUrl, { credentials: "same-origin" })
             .then((r) => r.json())
@@ -111,12 +112,7 @@
                     }
                 });
 
-                // Resize existing tiles if the live-stream count changed.
-                const tileClass = streams.length > 1 ? "col-12 col-md-6 iw-tile" : "col-12 iw-tile";
-                tiles.forEach((tile) => {
-                    tile.el.className = tileClass;
-                });
-
+                updateGridLayout(streams.length);
                 emptyState.classList.toggle("d-none", streams.length > 0);
 
                 // Auto solo the first stream so the very first viewer isn't
@@ -129,53 +125,8 @@
             .catch(() => {});
     }
 
-    function appendMessage(msg) {
-        const div = document.createElement("div");
-        div.className = "iw-msg";
-        const userSpan = document.createElement("span");
-        userSpan.className = "iw-user";
-        userSpan.textContent = msg.user + ": ";
-        div.appendChild(userSpan);
-        div.appendChild(document.createTextNode(msg.message));
-        chatLog.appendChild(div);
-        chatLog.scrollTop = chatLog.scrollHeight;
-        lastChatId = Math.max(lastChatId, msg.id);
-    }
-
-    function refreshChat() {
-        fetch(cfg.chatUrl + "?since=" + lastChatId, { credentials: "same-origin" })
-            .then((r) => r.json())
-            .then((data) => {
-                (data.messages || []).forEach(appendMessage);
-            })
-            .catch(() => {});
-    }
-
-    if (chatForm) {
-        chatForm.addEventListener("submit", (e) => {
-            e.preventDefault();
-            const message = chatInput.value.trim();
-            if (!message) {
-                return;
-            }
-            fetch(cfg.chatUrl, {
-                method: "POST",
-                credentials: "same-origin",
-                headers: {
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "X-CSRFToken": cfg.csrfToken
-                },
-                body: "message=" + encodeURIComponent(message)
-            }).then(() => {
-                chatInput.value = "";
-                refreshChat();
-            });
-        });
-    }
-
+    updateGridLayout(0);
     refreshStatus();
-    refreshChat();
     setInterval(refreshStatus, 8000);
-    setInterval(refreshChat, 3000);
 })();
 

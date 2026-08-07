@@ -2,24 +2,25 @@
     font-weight: 600;
 }
 
-.iw-viewer-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) clamp(18rem, 24vw, 22rem);
-    gap: 1rem;
-    align-items: start;
-}
-
 .iw-viewer-main {
     min-width: 0;
 }
 
-.iw-viewer-sidebar {
-    min-width: 0;
+.iw-video-grid {
+    display: grid;
+    gap: 1rem;
 }
 
-#iw-video-grid > .iw-tile:only-child {
-    flex: 0 0 100%;
-    max-width: 100%;
+.iw-video-grid--single {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.iw-video-grid--multi {
+    grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+}
+
+.iw-tile {
+    min-width: 0;
 }
 
 .iw-tile video {
@@ -28,21 +29,21 @@
     background: #000;
 }
 
-@media (max-width: 991.98px) {
-    .iw-viewer-layout {
+.iw-tile-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.iw-tile-name {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 575.98px) {
+    .iw-video-grid--multi {
         grid-template-columns: minmax(0, 1fr);
     }
-}
-
-#iw-chat-log {
-    font-size: 0.9rem;
-}
-
-#iw-chat-log .iw-msg {
-    margin-bottom: 0.25rem;
-    word-wrap: break-word;
-}
-
-#iw-chat-log .iw-msg .iw-user {
-    font-weight: 600;
 }
