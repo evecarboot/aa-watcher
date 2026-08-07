@@ -1,0 +1,33 @@
+{% extends "allianceauth/base-bs5.html" %}
+{% load static %}
+
+{% block page_title %}Intel Watcher{% endblock %}
+
+{% block extra_css %}
+    {{ block.super }}
+    <link rel="stylesheet" href="{% static 'aa_intel_watcher/css/intel_watcher.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <ul class="nav nav-tabs mb-3">
+        <li class="nav-item">
+            <a class="nav-link {% if active_tab == 'viewing' %}active{% endif %}"
+               href="{% url 'aa_intel_watcher:index' %}">Intel Viewing</a>
+        </li>
+        {% if can_stream %}
+        <li class="nav-item">
+            <a class="nav-link {% if active_tab == 'streamer_info' %}active{% endif %}"
+               href="{% url 'aa_intel_watcher:streamer_info' %}">Streamer Info</a>
+        </li>
+        {% endif %}
+    </ul>
+
+    {% block iw_content %}{% endblock %}
+</div>
+{% endblock %}
+
+{% block extra_javascript %}
+    {{ block.super }}
+    {% block iw_javascript %}{% endblock %}
+{% endblock %}

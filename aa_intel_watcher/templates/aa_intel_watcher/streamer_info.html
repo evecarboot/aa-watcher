@@ -1,0 +1,42 @@
+{% extends "aa_intel_watcher/base.html" %}
+{% load static %}
+
+{% block iw_content %}
+<div class="row">
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header">Your OBS settings</div>
+            <div class="card-body">
+                <p class="mb-1">
+                    <strong>Server:</strong>
+                    <code id="iw-server">{{ rtmp_server }}</code>
+                    <button type="button" class="btn btn-sm btn-outline-secondary iw-copy" data-target="iw-server">Copy</button>
+                </p>
+                <p class="mb-1">
+                    <strong>Stream Key:</strong>
+                    <code id="iw-stream-key">{{ stream_key }}</code>
+                    <button type="button" class="btn btn-sm btn-outline-secondary iw-copy" data-target="iw-stream-key">Copy</button>
+                </p>
+                <button id="iw-regen-key" class="btn btn-sm btn-outline-warning mt-2">
+                    Regenerate key
+                </button>
+                <p class="text-muted mt-2 mb-0">
+                    Paste these two values into OBS's Stream settings - nothing else
+                    to configure. Regenerating your key immediately invalidates the
+                    old one, so update OBS if you do this.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block iw_javascript %}
+    <script>
+        window.INTEL_WATCHER = {
+            regenerateUrl: "{% url 'aa_intel_watcher:api_regenerate_key' %}",
+            csrfToken: "{{ csrf_token }}"
+        };
+    </script>
+    <script src="{% static 'aa_intel_watcher/js/intel_watcher_streamer.js' %}"></script>
+{% endblock %}

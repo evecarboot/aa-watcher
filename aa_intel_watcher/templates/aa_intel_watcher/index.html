@@ -1,0 +1,36 @@
+{% extends "aa_intel_watcher/base.html" %}
+{% load static %}
+
+{% block iw_content %}
+<div class="row">
+    <div class="col-lg-9">
+        <div id="iw-empty-state" class="text-muted">Nobody is live right now.</div>
+        <div id="iw-video-grid" class="row g-2"></div>
+    </div>
+    <div class="col-lg-3">
+        <div class="card">
+            <div class="card-header">Chat</div>
+            <div class="card-body d-flex flex-column" style="height: 75vh;">
+                <div id="iw-chat-log" class="flex-grow-1 overflow-auto mb-2"></div>
+                <form id="iw-chat-form" class="d-flex gap-2">
+                    <input id="iw-chat-input" type="text" maxlength="500"
+                           class="form-control" placeholder="Say something...">
+                    <button type="submit" class="btn btn-primary">Send</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block iw_javascript %}
+    <script src="{% static 'aa_intel_watcher/js/hls.min.js' %}"></script>
+    <script>
+        window.INTEL_WATCHER = {
+            statusUrl: "{% url 'aa_intel_watcher:api_status' %}",
+            chatUrl: "{% url 'aa_intel_watcher:api_chat' %}",
+            csrfToken: "{{ csrf_token }}"
+        };
+    </script>
+    <script src="{% static 'aa_intel_watcher/js/intel_watcher_viewer.js' %}"></script>
+{% endblock %}

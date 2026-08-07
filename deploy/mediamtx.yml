@@ -1,0 +1,32 @@
+# MediaMTX config sample for aa-intel-watcher.
+# Install MediaMTX from https://github.com/bluenviron/mediamtx/releases
+# Place this file at e.g. /etc/mediamtx/mediamtx.yml and run as a systemd
+# service. Only bind it to localhost/private network interfaces - it must
+# never be reachable directly from the public internet (nginx is the only
+# public-facing entry point, see nginx-intel-watcher.conf).
+
+rtmpAddress: :1935
+
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemux: yes
+hlsVariant: mpegts
+hlsSegmentCount: 4
+hlsSegmentDuration: 1s
+# Locking this to localhost is fine since nginx (not browsers) talks to it.
+hlsAllowOrigin: "*"
+
+# Every publish attempt (OBS connecting) is validated against Alliance Auth.
+authMethod: http
+authHTTPAddress: http://127.0.0.1:8000/intel-watcher/hooks/publish-auth/
+
+paths:
+  all:
+    # Notify Alliance Auth when a streamer stops, so the page stops showing
+    # them as live. Replace CHANGE_ME with the value you set for
+    # INTEL_WATCHER_MEDIAMTX_SECRET in Alliance Auth's local settings.
+    runOnUnpublish: >
+      curl -s -X POST http://127.0.0.1:8000/intel-watcher/hooks/unpublish/
+      -H "X-Webhook-Secret: CHANGE_ME"
+      --data-urlencode "path=$MTX_PATH"
+    runOnUnpublishRestart: no

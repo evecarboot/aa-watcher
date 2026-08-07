@@ -1,0 +1,32 @@
+# Docker Compose overlay for aa-intel-watcher's media server.
+#
+# This adds MediaMTX as its own container on the SAME docker-compose project
+# as your Alliance Auth stack, so it can reach the `allianceauth_gunicorn`
+# container by service name (Docker's built-in DNS) and be reached by the
+# `nginx` container the same way - no host networking/127.0.0.1 involved.
+#
+# Usage (run from the same directory as your Alliance Auth docker-compose.yml):
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.mediamtx.yml up -d
+#
+# Or merge the `mediamtx:` service block below directly into your existing
+# docker-compose.yml if you'd rather not juggle two `-f` flags.
+
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx
+    restart: always
+    volumes:
+      - ./conf/mediamtx.yml:/mediamtx.yml
+    ports:
+      # RTMP - OBS needs to reach this directly, so it's published to the
+      # host/public interface. Prefer restricting this to your corp's VPN
+      # or a security group rule if streamers connect over one.
+      - "1935:1935"
+      # Deliberately NOT publishing 8888 (HLS) here - only the `nginx`
+      # container should ever reach it, over the internal docker network.
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10Mb"
+        max-file: "5"

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aa-intel-watcher"
+version = "0.1.0"
+description = "Alliance Auth app: corp/alliance-only OBS intel streaming page with live chat"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "allianceauth>=4.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["aa_intel_watcher*"]
