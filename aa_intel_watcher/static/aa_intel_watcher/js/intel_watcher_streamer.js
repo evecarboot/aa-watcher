@@ -10,14 +10,26 @@
             if (!confirm("Regenerate your stream key? You'll need to update OBS.")) {
                 return;
             }
+            regenBtn.disabled = true;
             fetch(cfg.regenerateUrl, {
                 method: "POST",
                 credentials: "same-origin",
                 headers: { "X-CSRFToken": cfg.csrfToken }
             })
-                .then((r) => r.json())
+                .then((r) => {
+                    if (r.redirected || !r.ok) {
+                        throw new Error("request failed");
+                    }
+                    return r.json();
+                })
                 .then((data) => {
                     keyEl.textContent = data.stream_key;
+                })
+                .catch(() => {
+                    alert("Could not regenerate the key - refresh the page and try again.");
+                })
+                .finally(() => {
+                    regenBtn.disabled = false;
                 });
         });
     }
@@ -28,11 +40,23 @@
             if (!target) {
                 return;
             }
-            navigator.clipboard.writeText(target.textContent.trim()).then(() => {
+            const text = target.textContent.trim();
+            const done = () => {
                 const original = btn.textContent;
                 btn.textContent = "Copied!";
                 setTimeout(() => (btn.textContent = original), 1500);
-            });
+            };
+            const failed = () => {
+                const original = btn.textContent;
+                btn.textContent = "Select & copy manually";
+                setTimeout(() => (btn.textContent = original), 2000);
+            };
+            // navigator.clipboard is unavailable on plain-HTTP origins
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(done).catch(failed);
+            } else {
+                failed();
+            }
         });
     });
 })();

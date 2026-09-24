@@ -8,6 +8,7 @@ there's no host file path to hunt down. Run this once, before
 
 import base64
 import hashlib
+import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -70,7 +71,11 @@ class Command(BaseCommand):
             )
 
         TARGET.parent.mkdir(parents=True, exist_ok=True)
-        TARGET.write_bytes(data)
+        # Write-then-rename so a crash mid-write can't leave a truncated
+        # hls.min.js behind for collectstatic to pick up.
+        tmp = TARGET.with_name(TARGET.name + ".tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, TARGET)
         self.stdout.write(
             self.style.SUCCESS(f"Verified and wrote {TARGET} ({len(data)} bytes).")
         )

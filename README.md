@@ -5,7 +5,7 @@ corp/alliance-only "Intel Watcher" section: members can stream from OBS to it,
 and it's viewable only by logged-in Alliance Auth users with the right
 permission - no YouTube/Twitch, no public exposure.
 
-Compatible with Alliance Auth **4.x** and **5.x** (tested against 5.2).
+Requires Alliance Auth **5.x** (tested against 5.2).
 
 ## Contents
 
@@ -58,10 +58,12 @@ Adds one sidebar entry ("Intel Watcher") with two tabs inside it:
 
 ## Requirements
 
-- Alliance Auth **4.x** or **5.x** (tested against 5.2).
+- Alliance Auth **5.x** (tested against 5.2).
 - Python **>= 3.10**.
 - [MediaMTX](https://github.com/bluenviron/mediamtx) - the streaming server.
-  One binary, no separate database.
+  One binary, no separate database. Tested against **v1.21.x**; the deploy
+  samples use `runOnUnavailable`, so MediaMTX must be new enough to have
+  that hook (v1.15+). Older releases call it `runOnNotReady`.
 - **nginx** with the `auth_request` module compiled in (standard on most
   distros/packages) - used to gate the HLS segments behind Alliance Auth auth.
 - OBS (or any RTMP source) on the streamer's side.
@@ -75,8 +77,8 @@ OBS  ───────────────────►  MediaMTX  ─
                              │ publish-auth webhook (HTTP)           │ auth_request sub-check
                              ▼                                       ▼
                           Alliance Auth  ◄────────────────────  Alliance Auth
-                          (sets is_live=True,                       (/intel-watcher/api/status/,
-                           checks can_stream)                        requires basic_access)
+                          (sets is_live=True,                       (/intel-watcher/hls-auth/,
+                           checks can_stream)                        returns 204/401)
 ```
 
 1. A streamer with `can_stream` starts OBS. MediaMTX receives the RTMP stream
@@ -88,16 +90,20 @@ OBS  ───────────────────►  MediaMTX  ─
    streamers, and play each one's HLS URL with
    [hls.js](https://github.com/video-dev/hls.js).
 4. nginx reverse-proxies `/hls/` to MediaMTX, but only after an `auth_request`
-   sub-check against `/intel-watcher/api/status/` - so the video segments
-   themselves are gated by `basic_access`, not just the page around them.
+   sub-check against `/intel-watcher/hls-auth/` - a bare 204/401 endpoint
+   requiring `basic_access` - so the video segments themselves are gated, not
+   just the page around them.
 5. When the streamer stops, MediaMTX fires the `runOnUnavailable` hook, which
-   POSTs to `mediamtx_unpublish` (with a shared secret) and the app flips
-   `is_live = False`.
+   POSTs to `mediamtx_unpublish` (with a shared secret and the session's
+   source ID) and the app flips `is_live = False`. If
+   `INTEL_WATCHER_HLS_INTERNAL_URL` is set, `api_status` also cross-checks
+   MediaMTX directly so a missed webhook or MediaMTX restart can't leave a
+   stream stuck "live".
 
 ## Installation
 
 These instructions assume you already have a working Alliance Auth installation
-(4.x or 5.x). There are two ways to run the media side: **bare metal** (MediaMTX
+(5.x). There are two ways to run the media side: **bare metal** (MediaMTX
 as a systemd service on the same host as Alliance Auth) or **Docker** (MediaMTX
 as an extra container on your existing Alliance Auth docker-compose project).
 Pick one of the two [MediaMTX setup](#mediamtx-setup) options below - the
@@ -144,22 +150,19 @@ python manage.py collectstatic       # picks up the app's static files
 sha256-verified `hls.min.js` into the app's static folder so members loading the
 page never make an external request. Re-run it with `--force` only when bumping
 the pinned version in
-`aa_intel_watcher/management/commands/fetch_hls_js.py`.
+`aa_intel_watcher/management/commands/fetch_hls_js.py`. If you skip this step
+the page still works - `index.html` falls back to the same pinned, SRI-hashed
+build on the jsdelivr CDN - but browsers will make an external request, so run
+it to keep the stack self-hosted.
 
-> **Note:** the current `index.html` template loads hls.js from the jsdelivr CDN
-> with an SRI integrity hash. If you prefer the fully self-hosted path described
-> above, change the `<script src=...>` in
-> `aa_intel_watcher/templates/aa_intel_watcher/index.html` to
-> `{% static 'aa_intel_watcher/js/hls.min.js' %}` and run `fetch_hls_js` +
-> `collectstatic`.
-
-### 5. Wire up the MediaMTX webhook URLs
+### 5. Wire up the MediaMTX + nginx auth URLs
 
 This step is **required** and easy to miss. Alliance Auth wraps every URL
 registered through an app's `url_hook` in `login_required`, which would block
-MediaMTX's server-to-server webhook calls. So the two webhook views must be
-wired up directly in your **project's** `urls.py` instead. See
-[`deploy/urls.py`](deploy/urls.py) for the full rationale and a
+MediaMTX's server-to-server webhook calls - and would turn the nginx
+`auth_request` check for HLS into a redirect (which nginx reports as a 500).
+So three views must be wired up directly in your **project's** `urls.py`
+instead. See [`deploy/urls.py`](deploy/urls.py) for the full rationale and a
 copy-paste-ready snippet.
 
 In short, edit `conf/urls.py` (Docker) or your project's `urls.py` (bare metal)
@@ -169,13 +172,19 @@ to look like:
 from django.urls import include, path
 
 from allianceauth import urls
-from aa_intel_watcher.views import mediamtx_publish_auth, mediamtx_unpublish
+from aa_intel_watcher.views import (
+    hls_auth,
+    mediamtx_publish_auth,
+    mediamtx_unpublish,
+)
 
 urlpatterns = [
     path("intel-watcher/hooks/publish-auth/",
          mediamtx_publish_auth, name="iw_publish_auth"),
     path("intel-watcher/hooks/unpublish/",
          mediamtx_unpublish, name="iw_unpublish"),
+    path("intel-watcher/hls-auth/",
+         hls_auth, name="iw_hls_auth"),
     path("", include(urls)),
 ]
 
@@ -185,8 +194,29 @@ handler403 = "allianceauth.views.Generic403Redirect"
 handler400 = "allianceauth.views.Generic400Redirect"
 ```
 
-The two `path(...)` entries must be **above** `path("", include(urls))` (Django
-uses first-match routing).
+The three `path(...)` entries must be **above** `path("", include(urls))`
+(Django uses first-match routing).
+
+### 5b. ALLOWED_HOSTS must cover the internal hostname
+
+Django rejects requests whose `Host` header isn't in `ALLOWED_HOSTS` with
+`400 DisallowedHost`. MediaMTX's publish-auth POSTs carry
+`Host: allianceauth_gunicorn:8000` (Docker) or `Host: 127.0.0.1:8000`
+(bare metal) - **not** your public domain. If `ALLOWED_HOSTS` doesn't
+include the internal hostname, every publish-auth call fails and MediaMTX
+rejects the stream: **OBS shows a connection failure even though TCP/1935
+is reachable.**
+
+In `local.py`:
+
+```python
+ALLOWED_HOSTS += ["allianceauth_gunicorn"]   # Docker service name
+# or: ALLOWED_HOSTS += ["127.0.0.1"]         # bare metal
+```
+
+If you'd rather not allow the underscored service name, add a network alias
+such as `intelwatcher-auth` to the `allianceauth_gunicorn` service, add that
+to `ALLOWED_HOSTS`, and use it in `authHTTPAddress` instead.
 
 ### 6. Configure nginx to gate the HLS segments
 
@@ -197,8 +227,17 @@ metal) or
 [`deploy/nginx-intel-watcher-docker.conf`](deploy/nginx-intel-watcher-docker.conf)
 (Docker) inside the existing `server {}` block that serves your Alliance Auth
 site. It uses nginx's `auth_request` to call back into
-`/intel-watcher/api/status/` (which requires `basic_access`) before proxying
-any segment from MediaMTX.
+`/intel-watcher/hls-auth/` (which requires `basic_access` and returns a bare
+204/401) before proxying any segment from MediaMTX. The snippet also
+rewrites MediaMTX's relative HLS redirects (`proxy_redirect`) - without it,
+first-time playback requests 404 on `/live/...` instead of `/hls/live/...`.
+
+> **Docker gotcha:** `conf/nginx.conf` is bind-mounted as a *single file*.
+> Editing it on the host replaces the inode, which the running container
+> doesn't see - `nginx -s reload` keeps serving the old config. After
+> editing, run `docker compose up -d --force-recreate nginx`, or verify with
+> `docker compose exec nginx cat /etc/nginx/nginx.conf`. See
+> TROUBLESHOOTING.md (Bug 4).
 
 ### 7. Restart services
 
@@ -226,6 +265,7 @@ you use).
 | `INTEL_WATCHER_MEDIAMTX_SECRET` | `""` (empty) | **Required.** Shared secret MediaMTX must send back on the `unpublish` webhook (via the `X-Webhook-Secret` header). Generate with `openssl rand -hex 32`. Must match the value in your `mediamtx.yml`. |
 | `INTEL_WATCHER_HLS_BASE_URL` | `"/hls"` | Public base URL where nginx reverse-proxies MediaMTX's HLS output. Only change it if you also change the nginx `location /hls/` block. |
 | `INTEL_WATCHER_RTMP_HOST` | hostname of the current request | Hostname OBS should connect to for RTMP. Set it explicitly if your public RTMP host differs from your web host (e.g. `stream.example.com` vs `auth.example.com`). |
+| `INTEL_WATCHER_HLS_INTERNAL_URL` | `""` (disabled) | Optional. Internal base URL where *Alliance Auth itself* can reach MediaMTX's HLS port - e.g. `http://127.0.0.1:8888` (bare metal) or `http://mediamtx:8888` (Docker). When set, `api_status` cross-checks `is_live` against MediaMTX and clears streams whose playlist 404s, which self-heals stale "live" tiles after a missed unpublish webhook or a MediaMTX restart. |
 
 ## Permissions
 
@@ -245,16 +285,19 @@ Pick **one** of the two options below - bare metal or Docker.
 
 ### Option A - bare metal
 
-1. Download the MediaMTX binary from
-   <https://github.com/bluenviron/mediamtx/releases> and place it somewhere on
-   your PATH.
+1. Download a MediaMTX binary from
+   <https://github.com/bluenviron/mediamtx/releases> (tested with v1.21.x -
+   the config uses `runOnUnavailable`, renamed from `runOnNotReady` in
+   v1.15) and place it somewhere on your PATH.
 2. Copy [`deploy/mediamtx.yml`](deploy/mediamtx.yml) to
    `/etc/mediamtx/mediamtx.yml` and replace `CHANGE_ME` with the same value you
    set for `INTEL_WATCHER_MEDIAMTX_SECRET` in
-   [Configuration](#configuration).
-3. Run MediaMTX as a systemd service, bound to localhost / a private interface
-   only - never the public internet (nginx is the only public-facing entry
-   point).
+   [Configuration](#configuration). The sample already binds HLS to
+   `127.0.0.1:8888` and disables RTSP/WebRTC/SRT; only RTMP `:1935` is
+   public-facing, which is what OBS needs.
+3. Make sure `127.0.0.1` is in `ALLOWED_HOSTS` (see step 5b) and `curl` is
+   installed (the unpublish hook uses it).
+4. Run MediaMTX as a systemd service.
 
 ### Option B - Docker
 
@@ -266,20 +309,29 @@ Pick **one** of the two options below - bare metal or Docker.
    ```
 
    (same value as in `local.py`).
-2. Bring up the overlay from the directory containing your Alliance Auth
-   `docker-compose.yml`:
+2. Copy this repo's `deploy/` directory next to your Alliance Auth
+   `docker-compose.yml` (the overlay references `./deploy/...` and
+   `./conf/`), then bring it up:
 
    ```bash
    docker compose -f docker-compose.yml \
                  -f deploy/docker-compose.mediamtx.yml up -d
    ```
 
+   The `mediamtx` service builds a small local image
+   ([`deploy/Dockerfile.mediamtx`](deploy/Dockerfile.mediamtx)): the stock
+   `bluenviron/mediamtx` image is `scratch`-based and has **no curl**, so the
+   unpublish hook could never fire and streams would never go offline. The
+   build pins MediaMTX to a tested version - bump `MEDIAMTX_VERSION`
+   deliberately.
+
    The `mediamtx-config` helper container substitutes your secret into
    [`deploy/mediamtx-docker.yml`](deploy/mediamtx-docker.yml) and writes the
    result to `./conf/mediamtx.yml` on every `up`, so edit
    `deploy/mediamtx-docker.yml` (not `./conf/mediamtx.yml`) if you need to tweak
    MediaMTX's config.
-3. Make sure your Alliance Auth `nginx` container and the `mediamtx` container
+3. Add `allianceauth_gunicorn` to `ALLOWED_HOSTS` (see step 5b), and make
+   sure your Alliance Auth `nginx` container and the `mediamtx` container
    are on the same docker-compose network so the
    `proxy_pass http://mediamtx:8888/` in the nginx snippet resolves.
 
@@ -307,7 +359,8 @@ Then restart Alliance Auth (and reload nginx if you changed any of the
 ## Uninstall
 
 1. Remove `"aa_intel_watcher"` from `INSTALLED_APPS`.
-2. Remove the two `path(...)` webhook entries from your project's `urls.py`
+2. Remove the three `path(...)` entries (two webhooks + `hls-auth`) from
+   your project's `urls.py`
    (added in [step 5](#5-wire-up-the-mediamtx-webhook-urls) of Installation).
 3. Remove the nginx `/hls/` and `/intel-watcher/_auth_check/` `location` blocks.
 4. Stop and remove MediaMTX (the systemd service or the docker-compose overlay).

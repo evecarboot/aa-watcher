@@ -1,0 +1,2 @@
+recursive-include aa_intel_watcher/templates *
+recursive-include aa_intel_watcher/static *

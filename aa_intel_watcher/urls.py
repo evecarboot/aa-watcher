@@ -5,13 +5,15 @@ from . import views
 app_name = "aa_intel_watcher"
 
 # NOTE: MediaMTX's webhook views (mediamtx_publish_auth, mediamtx_unpublish)
-# are deliberately NOT registered here. Alliance Auth wraps every view
-# reachable through an app's `url_hook` registration (see auth_hooks.py) in
+# and the nginx auth_request endpoint (hls_auth) are deliberately NOT
+# registered here. Alliance Auth wraps every view reachable through an
+# app's `url_hook` registration (see auth_hooks.py) in
 # `main_character_required`/`login_required` at the core urls.py level -
 # this happens unconditionally, regardless of any decorators on the view
 # itself, so a webhook endpoint registered this way could never be reached
-# by MediaMTX (an unauthenticated server-to-server caller). Instead, those
-# two views must be wired up directly in the project's own urls.py
+# by MediaMTX (an unauthenticated server-to-server caller), and hls_auth
+# would emit a login redirect instead of a bare 401. Instead, those three
+# views must be wired up directly in the project's own urls.py
 # (e.g. conf/urls.py in the docker setup) - see deploy/urls.py for the
 # snippet to add there.
 urlpatterns = [

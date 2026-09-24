@@ -6,17 +6,43 @@
     <div id="iw-empty-state" class="text-muted">Nobody is live right now.</div>
     <div id="iw-video-grid" class="iw-video-grid"></div>
 </div>
+
+<div class="card mt-3 iw-chat">
+    <div class="card-header">Chat</div>
+    <div class="card-body p-2">
+        <div id="iw-chat-messages" class="iw-chat-messages"></div>
+        <form id="iw-chat-form" class="d-flex gap-2 mt-2" autocomplete="off">
+            <input id="iw-chat-input" type="text" class="form-control form-control-sm"
+                   maxlength="500" placeholder="Message" required>
+            <button type="submit" class="btn btn-sm btn-primary">Send</button>
+        </form>
+        <div id="iw-chat-status" class="text-muted small mt-1 d-none"></div>
+    </div>
+</div>
 {% endblock %}
 
 {% block iw_javascript %}
-    <script
-        src="https://cdn.jsdelivr.net/npm/hls.js@1.6.15/dist/hls.min.js"
-        integrity="sha256-QTqD4rsMd+0L8L4QXVOdF+9F39mEoLE+zTsUqQE4OTg="
-        crossorigin="anonymous"></script>
+    {# hls.js is vendored into the app's static files by
+       `manage.py fetch_hls_js` (pinned version, sha256-verified). If that
+       step was skipped and the file is missing, fall back to the same
+       pinned version from jsdelivr with an SRI hash. #}
+    <script src="{% static 'aa_intel_watcher/js/hls.min.js' %}"></script>
+    <script>
+        if (!window.Hls) {
+            document.write(
+                '<script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.15/dist/hls.min.js" ' +
+                'integrity="sha256-QTqD4rsMd+0L8L4QXVOdF+9F39mEoLE+zTsUqQE4OTg=" ' +
+                'crossorigin="anonymous"><\/script>'
+            );
+        }
+    </script>
     <script>
         window.INTEL_WATCHER = {
-            statusUrl: "{% url 'aa_intel_watcher:api_status' %}"
+            statusUrl: "{% url 'aa_intel_watcher:api_status' %}",
+            chatUrl: "{% url 'aa_intel_watcher:api_chat' %}",
+            csrfToken: "{{ csrf_token }}"
         };
     </script>
     <script src="{% static 'aa_intel_watcher/js/intel_watcher_viewer.js' %}"></script>
+    <script src="{% static 'aa_intel_watcher/js/intel_watcher_chat.js' %}"></script>
 {% endblock %}

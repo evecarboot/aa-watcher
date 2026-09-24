@@ -156,6 +156,7 @@
             video,
             hls: null,
             soloBtn,
+            nameEl: name,
             driftTimer: setInterval(() => snapNearLive(video), DRIFT_CHECK_INTERVAL_MS)
         };
         soloBtn.addEventListener("click", () => soloAudio(stream.hls_url));
@@ -202,7 +203,14 @@
 
     function refreshStatus() {
         fetch(cfg.statusUrl, { credentials: "same-origin" })
-            .then((r) => r.json())
+            .then((r) => {
+                if (r.redirected || !r.ok) {
+                    // login_required answers with a 302 the fetch follows to
+                    // the login page - either way the session is gone.
+                    throw new Error("session-expired");
+                }
+                return r.json();
+            })
             .then((data) => {
                 const streams = data.streams || [];
                 const liveKeys = new Set(streams.map((s) => s.hls_url));
@@ -215,15 +223,23 @@
                     }
                 });
 
-                // Add tiles for newly live streams.
+                // Add tiles for newly live streams / refresh names.
                 streams.forEach((stream) => {
                     if (!tiles.has(stream.hls_url)) {
                         tiles.set(stream.hls_url, createTile(stream));
+                    } else {
+                        const tile = tiles.get(stream.hls_url);
+                        if (tile.nameEl.textContent !== stream.display_name) {
+                            tile.nameEl.textContent = stream.display_name;
+                        }
                     }
                 });
 
                 updateGridLayout();
                 emptyState.classList.toggle("d-none", streams.length > 0);
+                if (streams.length > 0) {
+                    emptyState.textContent = "Nobody is live right now.";
+                }
 
                 // Auto solo the first stream so the very first viewer isn't
                 // stuck fully muted, but never fight a viewer's own choice
@@ -232,7 +248,17 @@
                     soloAudio(streams[0].hls_url);
                 }
             })
-            .catch(() => {});
+            .catch((err) => {
+                if (err && err.message === "session-expired") {
+                    // Make an expired AA session visible instead of leaving
+                    // stale tiles frozen on screen forever.
+                    emptyState.textContent =
+                        "Session expired - refresh the page to keep watching.";
+                    emptyState.classList.remove("d-none");
+                    return;
+                }
+                // transient network error - keep polling quietly
+            });
     }
 
     updateGridLayout();

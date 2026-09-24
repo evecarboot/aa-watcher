@@ -162,6 +162,166 @@ docker compose exec allianceauth_gunicorn python manage.py shell -c \
   "from aa_intel_watcher.models import StreamKey; [print(s.id, s.user_id, s.is_live, s.last_seen, s.path_name) for s in StreamKey.objects.all()]"
 ```
 
+## Diagnosing "nc -vz server 1935 works but OBS can't publish"
+
+TCP/1935 being reachable only proves the port is open. OBS publishing goes
+RTMP -> MediaMTX -> HTTP publish-auth -> Django. Check in this order:
+
+1. **MediaMTX logs** - the publish attempt and the auth HTTP call's result
+   are both logged here:
+   ```bash
+   docker logs --tail=100 mediamtx
+   # look for "is publishing to path 'live/...'" then either an auth error
+   # or a "closed: ..." line
+   ```
+2. **Can MediaMTX reach the auth endpoint at all?**
+   ```bash
+   docker run --rm --network aa-docker_default curlimages/curl \
+     curl -sv -X POST http://allianceauth_gunicorn:8000/intel-watcher/hooks/publish-auth/ \
+     -H 'Content-Type: application/json' \
+     -d '{"action":"read","protocol":"hls","path":"live/x"}'
+   ```
+   Expect `200`. `400 DisallowedHost` means ALLOWED_HOSTS is missing the
+   internal hostname (see Bug 6 below - **the most likely cause**).
+   `404` means the webhook routes were never added to the project urls.py.
+   A redirect to `/account/login/` means the hooks are registered through
+   the app's `url_hook` instead of the project urls.py (Bug 1).
+   Connection refused/timeout means MediaMTX is on the wrong docker
+   network or the service name is wrong.
+3. **Alliance Auth logs** - a 400 DisallowedHost or a 403 from the view
+   shows up in gunicorn/Django logs:
+   ```bash
+   docker logs --tail=100 allianceauth_gunicorn
+   ```
+   The app logs `Intel Watcher: rejected publish ...` with the reason -
+   but never the stream key itself.
+4. **Permission check** - the key's owner must have `can_stream` and be an
+   active user. Revoked permission or disabled account -> publish denied.
+
+## Bug 6 - DisallowedHost on the publish-auth webhook (repo-level fix)
+
+**Symptom:** TCP/1935 reachable, OBS instantly rejected.
+
+**Root cause:** the shipped Docker config pointed `authHTTPAddress` at
+`http://allianceauth_gunicorn:8000/...`. MediaMTX sends
+`Host: allianceauth_gunicorn` on that request, and if ALLOWED_HOSTS doesn't
+contain it Django answers `400 DisallowedHost`, which MediaMTX treats as
+"auth denied". The alias fix from Bug 2 was documented but never applied
+to the shipped configs, and ALLOWED_HOSTS was never documented.
+
+**Fix:** nginx `_auth_check`/`hls-auth` proxies now send
+`proxy_set_header Host $host`, and the README/mediamtx comments spell out the
+ALLOWED_HOSTS requirement (add `allianceauth_gunicorn`, or an alias like
+`intelwatcher-auth`, in local.py).
+
+## Bug 7 - runOnUnavailable could never run in the Docker image
+
+**Symptom:** streams never went offline in the Docker deployment -
+`is_live` stuck `True` forever after every broadcast.
+
+**Root cause:** `bluenviron/mediamtx` is a `scratch` image containing only
+the mediamtx binary - no shell, no curl, no wget. The `runOnUnavailable:
+curl ...` hook exited instantly with `exec: "curl": executable file not
+found`.
+
+**Fix:** `deploy/Dockerfile.mediamtx` builds `alpine + curl + mediamtx`
+(pinned to a tested version via `MEDIAMTX_VERSION`) and the compose overlay
+uses it. Bonus: `curl --max-time 10` so a hung Alliance Auth can't wedge
+the hook, and `source_id=$MTX_SOURCE_ID` is sent so the app can ignore
+stale callbacks after a fast reconnect (see Bug 8).
+
+## Bug 8 - unpublish races and stale is_live
+
+**Symptom:** streamer reconnects quickly and the page flips them offline
+mid-stream, or a stream stays "live" forever after a key regeneration.
+
+**Root cause:** the unpublish webhook matched `StreamKey.key` against the
+path's last segment. Two failure modes:
+
+* publish A -> drop -> publish B (same key) -> delayed unpublish from A
+  arrives *after* B -> `is_live=False` while B is actually live.
+* regenerate key while streaming: the stream keeps broadcasting under the
+  OLD path (`live/<old-key>`), but the unpublish for it matched on `key`
+  which now holds the new value -> nothing updated, `is_live` stuck `True`,
+  and `api_status` pointed viewers at the new (dead) path.
+
+**Fix:** `StreamKey` now records `live_key` (the key MediaMTX accepted for
+the current session) and `live_session_id` (MediaMTX's connection UUID -
+the auth request `id`, also sent as `$MTX_SOURCE_ID` to the hook). An
+unpublish callback whose `source_id` doesn't match the live session is
+ignored, and the lookup matches `key OR live_key` so a rotated key still
+clears. `api_status` serves `active_path_name` so viewers keep getting the
+URL that's actually broadcasting after a mid-stream regen.
+
+## Bug 9 - pip-installed package had no templates or static files
+
+**Symptom:** `pip install git+...` succeeded but every page raised
+`TemplateDoesNotExist` and no JS/CSS was served.
+
+**Root cause:** `pyproject.toml` declared no `package-data`, so the wheel
+contained only `.py` files. Proven by building the wheel and listing its
+contents.
+
+**Fix:** `[tool.setuptools.package-data]` + `MANIFEST.in` - the wheel now
+contains templates, CSS and JS.
+
+## Bug 10 - bare-metal MediaMTX config exposed HLS (and RTSP/WebRTC) publicly
+
+**Symptom:** on a bare-metal install following the old sample, anyone on
+the internet could fetch `http://<host>:8888/live/<key>/index.m3u8` or pull
+`rtsp://<host>:8554/live/<key>` and watch streams without an Alliance Auth
+session - the auth endpoint returned 200 for every non-`publish` action.
+
+**Fix:** `hlsAddress` is now `127.0.0.1:8888`, unused protocols
+(`rtsp`, `webrtc`, `srt`) are explicitly disabled, and the auth endpoint
+denies `read`/`playback` on non-HLS protocols so a leaked stream key can't
+be used for a direct RTMP pull.
+
+## Bug 11 - anonymous HLS requests produced 500s
+
+**Symptom:** auth_request sub-check hit `api_status`, which is wrapped in
+`login_required` -> 302 to the login page -> auth_request maps non-2xx,
+non-401/403 to 500. Logged-out users got 500 instead of 401/403, and every
+segment request ran a pointless DB query.
+
+**Fix:** new `hls_auth` view (registered in the project urls.py next to the
+webhooks) returns bare `204`/`401` with no DB access; both nginx samples
+now point `_auth_check` at `/intel-watcher/hls-auth/` and forward the real
+`Host` header.
+
+## Bug 12 - publish-auth logged credentials and could 500 on bad input
+
+**Root cause:** the view logged the entire request payload - including the
+stream key and any OBS `user`/`password` credentials - into application
+logs. Non-dict JSON or a non-string `action` (e.g. `{"action": ["x"]}`)
+raised TypeError -> HTTP 500. Inactive users could still publish.
+
+**Fix:** payload is type-checked, bodies are size-capped, the stream key
+and credentials are never logged (decisions are logged by username +
+MediaMTX connection id), unknown actions are denied, and deactivated users
+are rejected even if they still hold `can_stream`.
+
+## Bug 13 - chat had no UI and paginated wrong
+
+**Root cause:** the chat API existed but no template/JS ever called it, and
+`order_by("created_at")[:200]` with `id > since` could skip messages around
+same-timestamp boundaries; `since=0` returned the *oldest* 200 messages
+ever rather than the recent backlog.
+
+**Fix:** a chat box + `intel_watcher_chat.js` now live on the viewer page
+(textContent-only rendering, CSRF header on POST); the endpoint orders by
+`id` and returns the newest 50 for `since=0`.
+
+## Bug 14 - stale "live" tiles after a missed webhook
+
+**Symptom:** MediaMTX restarts or the unpublish curl fails -> stream shows
+live forever.
+
+**Fix:** set `INTEL_WATCHER_HLS_INTERNAL_URL` (`http://127.0.0.1:8888` bare
+metal, `http://mediamtx:8888` Docker) and `api_status` will probe each live
+stream's playlist - a definitive 404 (with a 15s grace period after
+publish) clears `is_live`. Unreachable MediaMTX never flips state.
+
 ## General debugging techniques that worked well
 
 - **Bypass nginx entirely** to get ground truth from a service: spin up a

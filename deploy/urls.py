@@ -7,25 +7,35 @@ app's `url_hook` registration (see aa_intel_watcher/auth_hooks.py) in
 `get_hooks('url_hook')`. This happens no matter what decorators (or lack of
 them) are on the view itself.
 
-MediaMTX's publish-auth/unpublish webhooks are called server-to-server, with
-no Alliance Auth session cookie, so they can NEVER pass `login_required` -
-they must be wired up directly in the *project's* urls.py instead, entirely
+Three endpoints must NOT live behind that wrapper:
+
+* `mediamtx_publish_auth` / `mediamtx_unpublish` - called server-to-server
+  by MediaMTX with no Alliance Auth session cookie, so they can NEVER pass
+  `login_required`.
+* `hls_auth` - the target of nginx's `auth_request` for /hls/. It must be
+  free to return a bare 401 to anonymous users. Behind login_required it
+  would emit a 302 to the login page, which auth_request turns into a 500
+  for the real request instead of a clean denial.
+
+So all three must be wired up directly in the *project's* urls.py, entirely
 outside the url_hook mechanism.
 
 In the docker-based setup (see deploy/docker-compose.mediamtx.yml), the
 project's urls.py is `conf/urls.py`, mounted to
-`/home/allianceauth/myauth/myauth/urls.py`. Add the two `path(...)` entries
-below to that file, ABOVE `path("", include(urls))` (Django uses first-match
-routing, and aa_intel_watcher's own urls.py may still define the same paths
-as unreachable/shadowed - fine to leave alone, but they're not registered
-there anymore as of this writing).
+`/home/allianceauth/myauth/myauth/urls.py`. Add the three `path(...)`
+entries below to that file, ABOVE `path("", include(urls))` (Django uses
+first-match routing).
 
 Example resulting conf/urls.py:
 
     from django.urls import include, path
 
     from allianceauth import urls
-    from aa_intel_watcher.views import mediamtx_publish_auth, mediamtx_unpublish
+    from aa_intel_watcher.views import (
+        hls_auth,
+        mediamtx_publish_auth,
+        mediamtx_unpublish,
+    )
 
     urlpatterns = [
         path(
@@ -37,6 +47,11 @@ Example resulting conf/urls.py:
             "intel-watcher/hooks/unpublish/",
             mediamtx_unpublish,
             name="iw_unpublish",
+        ),
+        path(
+            "intel-watcher/hls-auth/",
+            hls_auth,
+            name="iw_hls_auth",
         ),
         path("", include(urls)),
     ]

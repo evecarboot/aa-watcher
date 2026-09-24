@@ -5,10 +5,18 @@
 # container by service name (Docker's built-in DNS) and be reached by the
 # `nginx` container the same way - no host networking/127.0.0.1 involved.
 #
+# The `deploy/` directory must sit next to your Alliance Auth
+# docker-compose.yml (copy it there from this repo) - relative paths below
+# resolve against the compose project directory.
+#
 # Before running this, put the secret in a `.env` file next to your
 # docker-compose.yml (same value you set for INTEL_WATCHER_MEDIAMTX_SECRET
 # in local.py):
 #   INTEL_WATCHER_MEDIAMTX_SECRET=<output of: openssl rand -hex 32>
+#
+# IMPORTANT: add `allianceauth_gunicorn` to ALLOWED_HOSTS in local.py.
+# MediaMTX's publish-auth POSTs carry "Host: allianceauth_gunicorn" - if
+# Django rejects the host, every OBS publish is denied (see README).
 #
 # Usage (run from the same directory as your Alliance Auth docker-compose.yml):
 #   docker compose -f docker-compose.yml -f deploy/docker-compose.mediamtx.yml up -d
@@ -18,7 +26,11 @@
 
 services:
   # One-shot helper: substitutes INTEL_WATCHER_MEDIAMTX_SECRET into
-  # deploy/mediamtx-docker.yml and writes the result to ./conf/mediamtx.yml -
+  # deploy/mediamtx-docker.yml and writes the result to ./conf/mediamtx.yml.
+  # (Note the generated file contains the plaintext secret - it's already
+  # written to ./conf/ alongside your other compose configs; keep it out of
+  # git.)
+  #
   # no more manually copying/editing that file or keeping the secret in sync
   # by hand. Re-runs (and overwrites ./conf/mediamtx.yml) on every `up`, so
   # make other edits in deploy/mediamtx-docker.yml, not ./conf/mediamtx.yml.
@@ -34,10 +46,20 @@ services:
     command:
       - sh
       - -c
-      - sed "s#CHANGE_ME#$$INTEL_WATCHER_MEDIAMTX_SECRET#" /template/mediamtx.yml > /out/mediamtx.yml && echo "Wrote ./conf/mediamtx.yml"
+      # Plain-string substitution via awk+ENVIRON - no regex/sed escaping,
+      # so secrets containing &, \, # or quotes can't corrupt the YAML.
+      - awk '{ s=ENVIRON["INTEL_WATCHER_MEDIAMTX_SECRET"]; out=""; rest=$$0; while ((i=index(rest,"CHANGE_ME"))>0){ out=out substr(rest,1,i-1) s; rest=substr(rest,i+9) } print out rest }' /template/mediamtx.yml > /out/mediamtx.yml && echo "Wrote ./conf/mediamtx.yml"
 
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    # NOT the stock image: bluenviron/mediamtx is scratch-based and has no
+    # curl, so the runOnUnavailable hook could never run. The Dockerfile
+    # builds alpine + curl + the pinned mediamtx binary.
+    build:
+      context: ./deploy
+      dockerfile: Dockerfile.mediamtx
+      args:
+        MEDIAMTX_VERSION: "1.21.0"
+    image: aa-intel-watcher-mediamtx:1.21.0
     container_name: mediamtx
     restart: always
     depends_on:
@@ -51,7 +73,9 @@ services:
       # or a security group rule if streamers connect over one.
       - "1935:1935"
       # Deliberately NOT publishing 8888 (HLS) here - only the `nginx`
-      # container should ever reach it, over the internal docker network.
+      # container (and allianceauth_gunicorn, for liveness checks if you set
+      # INTEL_WATCHER_HLS_INTERNAL_URL) should ever reach it, over the
+      # internal docker network.
     logging:
       driver: "json-file"
       options:

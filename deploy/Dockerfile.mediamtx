@@ -1,0 +1,19 @@
+# Custom MediaMTX image for aa-intel-watcher.
+#
+# The stock bluenviron/mediamtx image is built `FROM scratch` - it contains
+# ONLY the mediamtx binary: no shell, no curl, no wget. The unpublish hook
+# in mediamtx-docker.yml calls curl, so it would fail with
+# `exec: "curl": executable file not found` and is_live would never clear.
+#
+# This image is alpine + curl + the mediamtx binary, pinned to a tested
+# MediaMTX version (bump MEDIAMTX_VERSION deliberately, after checking
+# https://github.com/bluenviron/mediamtx/releases for config changes).
+
+ARG MEDIAMTX_VERSION=1.21.0
+FROM bluenviron/mediamtx:${MEDIAMTX_VERSION} AS mediamtx
+
+FROM alpine:3.20
+RUN apk add --no-cache curl
+COPY --from=mediamtx /mediamtx /mediamtx
+
+ENTRYPOINT ["/mediamtx"]

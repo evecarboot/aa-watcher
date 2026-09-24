@@ -1,22 +1,38 @@
-# MediaMTX config sample for aa-intel-watcher.
+# MediaMTX config sample for aa-intel-watcher (bare metal).
 # Install MediaMTX from https://github.com/bluenviron/mediamtx/releases
-# Place this file at e.g. /etc/mediamtx/mediamtx.yml and run as a systemd
-# service. Only bind it to localhost/private network interfaces - it must
-# never be reachable directly from the public internet (nginx is the only
-# public-facing entry point, see nginx-intel-watcher.conf).
+# (tested with v1.21.x) and place this file at e.g.
+# /etc/mediamtx/mediamtx.yml, run as a systemd service.
+#
+# RTMP (1935) must be reachable by streamers' OBS clients. Everything else
+# is bound to localhost so the only public-facing entry point is nginx
+# (see nginx-intel-watcher.conf). If you change rtmpAddress, keep the other
+# *_Address values locked to 127.0.0.1.
 
 rtmpAddress: :1935
 
+# Unused protocols are disabled so their default listeners never get
+# exposed. aa_intel_watcher only needs RTMP (publish) and HLS (viewing).
+rtsp: no
+webrtc: no
+srt: no
+
 hls: yes
-hlsAddress: :8888
+# localhost only - nginx (not browsers) talks to MediaMTX directly.
+hlsAddress: 127.0.0.1:8888
 hlsAlwaysRemux: yes
 hlsVariant: mpegts
 hlsSegmentCount: 3
 hlsSegmentDuration: 1s
-# Locking this to localhost is fine since nginx (not browsers) talks to it.
 hlsAllowOrigins: ["*"]
 
 # Every publish attempt (OBS connecting) is validated against Alliance Auth.
+# MediaMTX POSTs JSON {user, password, ip, action, path, protocol, id, ...}
+# and accepts the action on any 2xx response.
+#
+# IMPORTANT: Django validates the Host header against ALLOWED_HOSTS. MediaMTX
+# sends "Host: 127.0.0.1:8000" here, so 127.0.0.1 must be in ALLOWED_HOSTS
+# in Alliance Auth's local.py, or every publish will be rejected with a 400
+# (TCP 1935 connects fine but OBS "fails to connect").
 authMethod: http
 authHTTPAddress: http://127.0.0.1:8000/intel-watcher/hooks/publish-auth/
 
@@ -26,10 +42,16 @@ paths:
     # them as live. Replace CHANGE_ME with the value you set for
     # INTEL_WATCHER_MEDIAMTX_SECRET in Alliance Auth's local settings.
     #
-    # NOTE: MediaMTX renamed this hook from runOnUnpublish to runOnUnavailable
-    # (formerly runOnNotReady before that) - there's no separate "Restart"
-    # flag for it since it's a one-shot notification, not a long-running command.
+    # Requires curl on the host (present on any normal Linux install - the
+    # stock Docker image is scratch and has NO curl, see
+    # deploy/Dockerfile.mediamtx).
+    #
+    # runOnUnavailable env vars include MTX_PATH and MTX_SOURCE_ID (the
+    # publisher connection's UUID, same as the `id` field sent to the auth
+    # endpoint). source_id lets the app ignore stale callbacks when a
+    # streamer reconnects quickly.
     runOnUnavailable: >
-      curl -s -X POST http://127.0.0.1:8000/intel-watcher/hooks/unpublish/
+      curl -s --max-time 10 -X POST http://127.0.0.1:8000/intel-watcher/hooks/unpublish/
       -H "X-Webhook-Secret: CHANGE_ME"
       --data-urlencode "path=$MTX_PATH"
+      --data-urlencode "source_id=$MTX_SOURCE_ID"

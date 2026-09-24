@@ -7,12 +7,21 @@
 # up`. Edit this template if you need to change anything else about
 # MediaMTX's config.
 #
-# The only difference from deploy/mediamtx.yml (bare metal) is that Alliance
-# Auth is reached via its Docker Compose service name (`allianceauth_gunicorn`)
-# instead of 127.0.0.1, since MediaMTX now runs in its own container on the
-# same docker-compose network.
+# The differences from deploy/mediamtx.yml (bare metal):
+#  * Alliance Auth is reached via its Docker Compose service name
+#    (`allianceauth_gunicorn`) instead of 127.0.0.1, since MediaMTX runs in
+#    its own container on the same docker-compose network.
+#  * hlsAddress stays bound to all interfaces - the port is never published
+#    to the host, only reachable from other containers on the compose
+#    network (the `nginx` container, and the app for liveness checks).
 
 rtmpAddress: :1935
+
+# Unused protocols are disabled so their default listeners never accept
+# traffic. aa_intel_watcher only needs RTMP (publish) and HLS (viewing).
+rtsp: no
+webrtc: no
+srt: no
 
 hls: yes
 hlsAddress: :8888
@@ -20,11 +29,19 @@ hlsAlwaysRemux: yes
 hlsVariant: mpegts
 hlsSegmentCount: 3
 hlsSegmentDuration: 1s
-# Fine to leave open - only the `nginx` container (not browsers) ever
-# reaches this address directly.
 hlsAllowOrigins: ["*"]
 
 # Every publish attempt (OBS connecting) is validated against Alliance Auth.
+# MediaMTX POSTs JSON {user, password, ip, action, path, protocol, id, ...}
+# and accepts the action on any 2xx response.
+#
+# IMPORTANT: Django validates the Host header against ALLOWED_HOSTS. MediaMTX
+# sends "Host: allianceauth_gunicorn:8000" here, so "allianceauth_gunicorn"
+# must be in ALLOWED_HOSTS in local.py (or add a plain-ASCII network alias
+# like `intelwatcher-auth` to the allianceauth_gunicorn service, add that to
+# ALLOWED_HOSTS, and use it here instead). If it isn't, MediaMTX gets a 400
+# DisallowedHost and rejects every publish - TCP 1935 connects fine but OBS
+# "fails to connect".
 authMethod: http
 authHTTPAddress: http://allianceauth_gunicorn:8000/intel-watcher/hooks/publish-auth/
 
@@ -35,10 +52,16 @@ paths:
     # INTEL_WATCHER_MEDIAMTX_SECRET by the mediamtx-config helper container -
     # it must match the value set in Alliance Auth's local.py.
     #
-    # NOTE: MediaMTX renamed this hook from runOnUnpublish to runOnUnavailable
-    # (formerly runOnNotReady before that) - there's no separate "Restart"
-    # flag for it since it's a one-shot notification, not a long-running command.
+    # NOTE: the stock bluenviron/mediamtx image is `scratch`-based and has
+    # no curl - the compose overlay builds a small alpine+curl image for
+    # this reason (see deploy/Dockerfile.mediamtx).
+    #
+    # runOnUnavailable env vars include MTX_PATH and MTX_SOURCE_ID (the
+    # publisher connection's UUID, same as the `id` field sent to the auth
+    # endpoint). source_id lets the app ignore stale callbacks when a
+    # streamer reconnects quickly.
     runOnUnavailable: >
-      curl -s -X POST http://allianceauth_gunicorn:8000/intel-watcher/hooks/unpublish/
+      curl -s --max-time 10 -X POST http://allianceauth_gunicorn:8000/intel-watcher/hooks/unpublish/
       -H "X-Webhook-Secret: CHANGE_ME"
       --data-urlencode "path=$MTX_PATH"
+      --data-urlencode "source_id=$MTX_SOURCE_ID"
