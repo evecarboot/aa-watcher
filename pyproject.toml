@@ -8,7 +8,8 @@ version = "0.3.0"
 description = "Alliance Auth app: corp/alliance-only OBS intel streaming page with live chat"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
+license = "LicenseRef-Proprietary"
+license-files = ["LICENSE"]
 dependencies = [
     "allianceauth>=5.0.0",
 ]

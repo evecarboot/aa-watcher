@@ -1,46 +1,40 @@
-# aa-intel-watcher
+# AA-Watcher
 
-An [Alliance Auth](https://github.com/allianceauth/allianceauth) app that adds a
+An [Alliance Auth](https://gitlab.com/allianceauth/allianceauth) app that adds a
 corp/alliance-only "Intel Watcher" section: members can stream from OBS to it,
-and it's viewable only by logged-in Alliance Auth users with the right
+and it is viewable only by logged-in Alliance Auth users with the right
 permission - no YouTube/Twitch, no public exposure.
 
 Requires Alliance Auth **5.x** (tested against 5.2).
 
 ## Contents
 
-- [What it does](#what-it-does)
 - [Features](#features)
 - [Requirements](#requirements)
 - [How it works](#how-it-works)
 - [Installation](#installation)
-- [Configuration](#configuration)
+- [Alliance Auth configuration](#alliance-auth-configuration)
 - [Permissions](#permissions)
 - [MediaMTX setup](#mediamtx-setup)
-- [Streamer setup](#streamer-setup-for-members-with-can_stream)
-- [Upgrading](#upgrading)
+- [nginx setup](#nginx-setup)
+- [OBS / streamer setup](#obs--streamer-setup)
+- [Updating](#updating)
 - [Uninstall](#uninstall)
 - [Troubleshooting](#troubleshooting)
-- [License](#license)
-
-## What it does
-
-Adds one sidebar entry ("Intel Watcher") with two tabs inside it:
-
-- **Intel Viewing** - a grid of every currently-live stream (one tile per
-  streamer, no clutter around them) plus chat. This is the page everyone with
-  `basic_access` lands on.
-- **Streamer Info** - OBS server/key details and the "regenerate key" button.
-  Only shown/reachable to users with `can_stream`.
+- [Licence](#licence)
 
 ## Features
 
+- Adds one sidebar entry ("Intel Watcher") with two tabs:
+  - **Intel Viewing** - a grid of every currently-live stream (one tile per
+    streamer) plus chat. This is the page everyone with `basic_access` lands on.
+  - **Streamer Info** - OBS server/key details and the "regenerate key" button.
+    Only shown/reachable to users with `can_stream`.
 - **Streaming server:** [MediaMTX](https://github.com/bluenviron/mediamtx) - a
   single binary, no separate database or website. Accepts RTMP from OBS, serves
   HLS for browser playback.
 - **Who can push a stream (`can_stream` permission):** managed the normal
-  Alliance Auth way, via groups/states in the admin. No separate "approve
-  streamer" workflow to build/maintain.
+  Alliance Auth way, via groups/states in the admin.
 - **Auto-show whoever is live:** MediaMTX calls a webhook in this app on
   publish/unpublish; the page polls a small JSON endpoint and swaps the player
   to whichever approved streamer is currently live.
@@ -50,8 +44,7 @@ Adds one sidebar entry ("Intel Watcher") with two tabs inside it:
   nginx sample, the actual video segments - not just the UI around them.
 - **Multiple simultaneous streamers:** each live streamer gets their own tile
   with independent native video controls. A "Solo audio" button on each tile
-  mutes every other tile - handy if you and another streamer both end up in the
-  same system and don't want two audio tracks playing at once.
+  mutes every other tile.
 - **Theming:** every template extends `allianceauth/base-bs5.html` and only uses
   standard Bootstrap classes, so the app automatically matches whatever
   Bootswatch theme a user has selected in Alliance Auth - nothing to configure.
@@ -102,12 +95,13 @@ OBS  ───────────────────►  MediaMTX  ─
 
 ## Installation
 
-These instructions assume you already have a working Alliance Auth installation
-(5.x). There are two ways to run the media side: **bare metal** (MediaMTX
-as a systemd service on the same host as Alliance Auth) or **Docker** (MediaMTX
-as an extra container on your existing Alliance Auth docker-compose project).
-Pick one of the two [MediaMTX setup](#mediamtx-setup) options below - the
-Alliance Auth side is the same either way.
+These instructions assume you already have a working Alliance Auth 5.x
+installation. There are two ways to run the media side: **bare metal**
+(MediaMTX as a systemd service on the same host as Alliance Auth) or
+**Docker** (MediaMTX as an extra container on your existing Alliance Auth
+docker-compose project). Pick one of the two
+[MediaMTX setup](#mediamtx-setup) options below - the Alliance Auth side is
+the same either way.
 
 ### 1. Install the app
 
@@ -131,8 +125,8 @@ INSTALLED_APPS += ["aa_intel_watcher"]
 
 ### 3. Add the settings
 
-See [Configuration](#configuration) for the full list. The only required one is
-the shared webhook secret:
+See [Alliance Auth configuration](#alliance-auth-configuration) for the full
+list. The only required one is the shared webhook secret:
 
 ```python
 INTEL_WATCHER_MEDIAMTX_SECRET = "your-secret-here"  # see Configuration
@@ -197,7 +191,7 @@ handler400 = "allianceauth.views.Generic400Redirect"
 The three `path(...)` entries must be **above** `path("", include(urls))`
 (Django uses first-match routing).
 
-### 5b. ALLOWED_HOSTS must cover the internal hostname
+### 6. ALLOWED_HOSTS must cover the internal hostname
 
 Django rejects requests whose `Host` header isn't in `ALLOWED_HOSTS` with
 `400 DisallowedHost`. MediaMTX's publish-auth POSTs carry
@@ -218,28 +212,11 @@ If you'd rather not allow the underscored service name, add a network alias
 such as `intelwatcher-auth` to the `allianceauth_gunicorn` service, add that
 to `ALLOWED_HOSTS`, and use it in `authHTTPAddress` instead.
 
-### 6. Configure nginx to gate the HLS segments
+### 7. Configure nginx
 
-Without this, anyone with the (guessable) HLS URL could watch without logging
-in. Add the snippet from
-[`deploy/nginx-intel-watcher.conf`](deploy/nginx-intel-watcher.conf) (bare
-metal) or
-[`deploy/nginx-intel-watcher-docker.conf`](deploy/nginx-intel-watcher-docker.conf)
-(Docker) inside the existing `server {}` block that serves your Alliance Auth
-site. It uses nginx's `auth_request` to call back into
-`/intel-watcher/hls-auth/` (which requires `basic_access` and returns a bare
-204/401) before proxying any segment from MediaMTX. The snippet also
-rewrites MediaMTX's relative HLS redirects (`proxy_redirect`) - without it,
-first-time playback requests 404 on `/live/...` instead of `/hls/live/...`.
+See [nginx setup](#nginx-setup) below.
 
-> **Docker gotcha:** `conf/nginx.conf` is bind-mounted as a *single file*.
-> Editing it on the host replaces the inode, which the running container
-> doesn't see - `nginx -s reload` keeps serving the old config. After
-> editing, run `docker compose up -d --force-recreate nginx`, or verify with
-> `docker compose exec nginx cat /etc/nginx/nginx.conf`. See
-> TROUBLESHOOTING.md (Bug 4).
-
-### 7. Restart services
+### 8. Restart services
 
 ```bash
 # Bare metal:
@@ -251,11 +228,11 @@ docker compose restart allianceauth_gunicorn
 docker compose exec nginx nginx -s reload
 ```
 
-### 8. Set up MediaMTX
+### 9. Set up MediaMTX
 
 See [MediaMTX setup](#mediamtx-setup) below.
 
-## Configuration
+## Alliance Auth configuration
 
 All settings live in your Alliance Auth `local.py` (or whichever settings file
 you use).
@@ -271,8 +248,8 @@ you use).
 
 Two permissions are defined on the app's `General` model (in
 `aa_intel_watcher/models.py`). Assign them in the Alliance Auth admin
-(`/admin/`) to whichever group/state should have them - the normal Alliance Auth
-way, no separate "approve streamer" workflow:
+(`/admin/`) to whichever group/state should have them - the normal Alliance
+Auth way, no separate "approve streamer" workflow:
 
 | Permission | What it grants |
 | --- | --- |
@@ -292,11 +269,11 @@ Pick **one** of the two options below - bare metal or Docker.
 2. Copy [`deploy/mediamtx.yml`](deploy/mediamtx.yml) to
    `/etc/mediamtx/mediamtx.yml` and replace `CHANGE_ME` with the same value you
    set for `INTEL_WATCHER_MEDIAMTX_SECRET` in
-   [Configuration](#configuration). The sample already binds HLS to
-   `127.0.0.1:8888` and disables RTSP/WebRTC/SRT; only RTMP `:1935` is
-   public-facing, which is what OBS needs.
-3. Make sure `127.0.0.1` is in `ALLOWED_HOSTS` (see step 5b) and `curl` is
-   installed (the unpublish hook uses it).
+   [Alliance Auth configuration](#alliance-auth-configuration). The sample
+   already binds HLS to `127.0.0.1:8888` and disables RTSP/WebRTC/SRT; only
+   RTMP `:1935` is public-facing, which is what OBS needs.
+3. Make sure `127.0.0.1` is in `ALLOWED_HOSTS` (see Installation step 6) and
+   `curl` is installed (the unpublish hook uses it).
 4. Run MediaMTX as a systemd service.
 
 ### Option B - Docker
@@ -329,13 +306,37 @@ Pick **one** of the two options below - bare metal or Docker.
    [`deploy/mediamtx-docker.yml`](deploy/mediamtx-docker.yml) and writes the
    result to `./conf/mediamtx.yml` on every `up`, so edit
    `deploy/mediamtx-docker.yml` (not `./conf/mediamtx.yml`) if you need to tweak
-   MediaMTX's config.
-3. Add `allianceauth_gunicorn` to `ALLOWED_HOSTS` (see step 5b), and make
-   sure your Alliance Auth `nginx` container and the `mediamtx` container
-   are on the same docker-compose network so the
+   MediaMTX's config. (`./conf/mediamtx.yml` contains the real secret and is
+   covered by `.gitignore` - never commit it.)
+3. Add `allianceauth_gunicorn` to `ALLOWED_HOSTS` (see Installation step 6),
+   and make sure your Alliance Auth `nginx` container and the `mediamtx`
+   container are on the same docker-compose network so the
    `proxy_pass http://mediamtx:8888/` in the nginx snippet resolves.
 
-## Streamer setup (for members with `can_stream`)
+## nginx setup
+
+Without this step, anyone with the (guessable) HLS URL could watch without
+logging in. Add the snippet from
+[`deploy/nginx-intel-watcher.conf`](deploy/nginx-intel-watcher.conf) (bare
+metal) or
+[`deploy/nginx-intel-watcher-docker.conf`](deploy/nginx-intel-watcher-docker.conf)
+(Docker) inside the existing `server {}` block that serves your Alliance Auth
+site. It uses nginx's `auth_request` to call back into
+`/intel-watcher/hls-auth/` (which requires `basic_access` and returns a bare
+204/401) before proxying any segment from MediaMTX. The snippet also
+rewrites MediaMTX's relative HLS redirects (`proxy_redirect`) - without it,
+first-time playback requests 404 on `/live/...` instead of `/hls/live/...`.
+
+> **Docker gotcha:** `conf/nginx.conf` is bind-mounted as a *single file*.
+> Editing it on the host replaces the inode, which the running container
+> doesn't see - `nginx -s reload` keeps serving the old config. After
+> editing, run `docker compose up -d --force-recreate nginx`, or verify with
+> `docker compose exec nginx cat /etc/nginx/nginx.conf`. See
+> TROUBLESHOOTING.md (Bug 4).
+
+## OBS / streamer setup
+
+For members with `can_stream`:
 
 1. Log in to Alliance Auth and open **Intel Watcher -> Streamer Info**.
 2. Copy the **Server** (`rtmp://<host>:1935/live`) and **Stream Key** values.
@@ -344,7 +345,7 @@ Pick **one** of the two options below - bare metal or Docker.
 4. Use **Regenerate key** on the same page if the key ever leaks - it
    invalidates the old one immediately, so update OBS afterwards.
 
-## Upgrading
+## Updating
 
 ```bash
 pip install --upgrade --force-reinstall git+https://github.com/evecarboot/aa-watcher.git
@@ -361,7 +362,7 @@ Then restart Alliance Auth (and reload nginx if you changed any of the
 1. Remove `"aa_intel_watcher"` from `INSTALLED_APPS`.
 2. Remove the three `path(...)` entries (two webhooks + `hls-auth`) from
    your project's `urls.py`
-   (added in [step 5](#5-wire-up-the-mediamtx-webhook-urls) of Installation).
+   (added in [Installation step 5](#5-wire-up-the-mediamtx--nginx-auth-urls)).
 3. Remove the nginx `/hls/` and `/intel-watcher/_auth_check/` `location` blocks.
 4. Stop and remove MediaMTX (the systemd service or the docker-compose overlay).
 5. Drop the app's tables (optional - leaves the data in place otherwise):
@@ -376,8 +377,17 @@ Then restart Alliance Auth (and reload nginx if you changed any of the
 
 See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for known gotchas and the
 debugging log - e.g. why the webhook URLs must live in the project `urls.py`,
-not the app's `url_hook`.
+not the app's `url_hook`, and how to diagnose "TCP/1935 is reachable but OBS
+can't publish".
 
-## License
+## Licence
 
-MIT - see [`pyproject.toml`](pyproject.toml).
+AA-Watcher is proprietary/source-available software.
+
+The source repository is publicly accessible so Alliance Auth administrators
+can inspect and install the official plugin. Downloading and installing the
+official unmodified plugin is permitted.
+
+Modification, redistribution, republishing and derivative works are not
+permitted except where expressly authorised. See [`LICENSE`](LICENSE) for the
+full terms.

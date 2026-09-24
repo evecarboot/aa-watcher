@@ -1,0 +1,31 @@
+AA-Watcher Proprietary License
+
+Copyright (c) 2026 evecarboot. All rights reserved.
+
+Permission is granted to download, install and use an unmodified official
+copy of AA-Watcher, obtained from the official repository at
+https://github.com/evecarboot/aa-watcher, for use with an Alliance Auth
+installation.
+
+Permission is NOT granted to:
+
+  * modify, adapt or translate the software;
+  * create derivative works based on the software;
+  * redistribute, republish, repackage or mirror the software or any part
+    of it, including via unofficial releases;
+  * sublicense, sell or commercially resell the software;
+  * provide modified or unmodified copies to third parties outside the
+    permissions granted above;
+  * reverse engineer the software, except to the extent such restriction
+    is prohibited by applicable law;
+  * remove or alter copyright or licence notices;
+  * claim authorship of the software.
+
+You may retain reasonable backup copies of the software for your own
+installation. The copyright and licence notices must remain intact.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE.
+
+All rights not expressly granted are reserved.
