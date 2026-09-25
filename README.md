@@ -27,7 +27,8 @@ Requires Alliance Auth **5.x** (tested against 5.2).
 
 - Adds one sidebar entry ("Intel Watcher") with two tabs:
   - **Intel Viewing** - a grid of every currently-live stream (one tile per
-    streamer) plus chat. This is the page everyone with `basic_access` lands on.
+    streamer) plus optional chat. This is the page everyone with
+    `basic_access` lands on.
   - **Streamer Info** - OBS server/key details and the "regenerate key" button.
     Only shown/reachable to users with `can_stream`.
 - **Streaming server:** [MediaMTX](https://github.com/bluenviron/mediamtx) - a
@@ -38,10 +39,11 @@ Requires Alliance Auth **5.x** (tested against 5.2).
 - **Auto-show whoever is live:** MediaMTX calls a webhook in this app on
   publish/unpublish; the page polls a small JSON endpoint and swaps the player
   to whichever approved streamer is currently live.
-- **Chat:** plain polling AJAX chat stored in the Alliance Auth database. No
-  websockets/Channels/Redis pub-sub required. Sits beside the stream grid on
-  wide windows and stacks below it on narrow ones; admins can disable it
-  site-wide and viewers can hide it per-browser.
+- **Optional chat:** plain polling AJAX chat stored in the Alliance Auth
+  database. No websockets/Channels/Redis pub-sub required. Sits beside the
+  stream grid on wide windows and stacks below it on narrow ones. **Disabled
+  by default** - an admin turns it on site-wide; viewers can also hide it
+  per-browser.
 - **Who can view (`basic_access` permission):** gates both the page and, via the
   nginx sample, the actual video segments - not just the UI around them.
 - **Multiple simultaneous streamers:** each live streamer gets their own tile
@@ -308,12 +310,11 @@ no setting is needed - silence `aa_intel_watcher.W001` via
 
 ### Site settings (Alliance Auth admin)
 
-Administrators can toggle Intel Watcher chat site-wide in the admin:
-**Intel Watcher settings -> Enable chat** (under the `AA_INTEL_WATCHER`
-app). Chat is **enabled by default**, including for existing installs
-after upgrade. Disabling it removes the chat UI and polling, lets the
-stream grid use the full content width, and makes the chat endpoint
-return 404 - no restart required, the change takes effect on the next
+Intel Watcher chat is **disabled by default**. Site administrators can
+enable it in the admin: **Intel Watcher settings -> Enable chat** (under
+the `AA_INTEL_WATCHER` app). While disabled there is no chat UI, no chat
+polling, the chat endpoint returns 404, and the stream grid uses the full
+content width. No restart required - the change takes effect on the next
 request/page load.
 
 ## Permissions

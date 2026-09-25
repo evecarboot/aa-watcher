@@ -14,7 +14,7 @@ class Migration(migrations.Migration):
             name='IntelWatcherSettings',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('chat_enabled', models.BooleanField(default=True, help_text='Show the Intel Watcher chat box next to the stream grid. Uncheck to disable chat site-wide - viewers see the full-width stream area and the chat endpoint stops responding.')),
+                ('chat_enabled', models.BooleanField(default=False, help_text='Enable the global Intel Watcher chat on the Intel Viewing page. Unchecked (the default) disables chat site-wide - viewers see the full-width stream area and the chat endpoint stops responding.')),
             ],
             options={
                 'verbose_name': 'Intel Watcher settings',

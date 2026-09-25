@@ -27,15 +27,15 @@ class IntelWatcherSettings(models.Model):
     Singleton by convention: the effective row is always pk=1, `save()`
     forces that pk, and the admin hides add/delete so the row can only ever
     be created once. No row existing at all (fresh install, pre-migration
-    data) means "everything default" - chat enabled.
+    data) means "everything default" - chat disabled.
     """
 
     chat_enabled = models.BooleanField(
-        default=True,
+        default=False,
         help_text=(
-            "Show the Intel Watcher chat box next to the stream grid. "
-            "Uncheck to disable chat site-wide - viewers see the full-width "
-            "stream area and the chat endpoint stops responding."
+            "Enable the global Intel Watcher chat on the Intel Viewing page. "
+            "Unchecked (the default) disables chat site-wide - viewers see "
+            "the full-width stream area and the chat endpoint stops responding."
         ),
     )
 
@@ -54,9 +54,9 @@ class IntelWatcherSettings(models.Model):
 
     @classmethod
     def chat_is_enabled(cls):
-        """Effective chat flag - defaults to enabled with no settings row."""
+        """Effective chat flag - defaults to disabled with no settings row."""
         row = cls.load()
-        return row.chat_enabled if row else True
+        return row.chat_enabled if row else False
 
 
 class StreamKey(models.Model):
