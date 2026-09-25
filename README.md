@@ -113,7 +113,16 @@ pip install git+https://github.com/evecarboot/aa-watcher.git
 ```
 
 If you vendor the repo into your project instead of pip-installing it, make sure
-`aa_intel_watcher` is importable on the Python path.
+`aa_intel_watcher` is importable on the Python path **and owned by the user
+Alliance Auth runs as**. In a custom Docker image, `COPY` produces root-owned
+files; use e.g.
+
+```dockerfile
+COPY --chown=allianceauth:allianceauth aa-watcher/aa_intel_watcher /home/allianceauth/.local/lib/python3.12/site-packages/aa_intel_watcher
+```
+
+or `python manage.py fetch_hls_js` will fail with `PermissionError` when it
+tries to write `hls.min.js` into the package's own static folder.
 
 ### 2. Add to `INSTALLED_APPS`
 
@@ -232,6 +241,26 @@ docker compose exec nginx nginx -s reload
 
 See [MediaMTX setup](#mediamtx-setup) below.
 
+### 10. Give OBS a hostname that actually reaches MediaMTX
+
+Skip this only if your Alliance Auth website hostname accepts TCP/1935
+directly (simple single-host installs). If the website is behind Cloudflare
+or any other HTTP(S)-only proxy/CDN, it does **not** - OBS pointed at it
+fails before MediaMTX sees anything, and `docker logs mediamtx` stays
+empty.
+
+Create a dedicated DNS record that resolves directly to the MediaMTX
+server (Cloudflare: **DNS only**, not proxied) and set it explicitly:
+
+```python
+INTEL_WATCHER_RTMP_HOST = "media.example.com"
+```
+
+See [Two hostnames](#two-hostnames-web-vs-rtmp). Then verify from a machine
+where OBS will run - Windows: `Test-NetConnection media.example.com -Port 1935`;
+Linux/macOS: `nc -vz media.example.com 1935`. If the port is unreachable,
+fix DNS/firewall/Docker port publication **before** touching anything else.
+
 ## Alliance Auth configuration
 
 All settings live in your Alliance Auth `local.py` (or whichever settings file
@@ -241,8 +270,33 @@ you use).
 | --- | --- | --- |
 | `INTEL_WATCHER_MEDIAMTX_SECRET` | `""` (empty) | **Required.** Shared secret MediaMTX must send back on the `unpublish` webhook (via the `X-Webhook-Secret` header). Generate with `openssl rand -hex 32`. Must match the value in your `mediamtx.yml`. |
 | `INTEL_WATCHER_HLS_BASE_URL` | `"/hls"` | Public base URL where nginx reverse-proxies MediaMTX's HLS output. Only change it if you also change the nginx `location /hls/` block. |
-| `INTEL_WATCHER_RTMP_HOST` | hostname of the current request | Hostname OBS should connect to for RTMP. Set it explicitly if your public RTMP host differs from your web host (e.g. `stream.example.com` vs `auth.example.com`). |
+| `INTEL_WATCHER_RTMP_HOST` | hostname of the current request | Hostname shown to streamers in "Streamer Info" (`rtmp://<host>:1935/live`). **Set this explicitly whenever the Alliance Auth website hostname can't accept RTMP TCP/1935** - typically because it's proxied through a service that only forwards HTTP(S) (Cloudflare, a CDN, a load balancer), or because MediaMTX runs on different infrastructure. See [Two hostnames](#two-hostnames-web-vs-rtmp) below. If left unset, `manage.py check` emits `aa_intel_watcher.W001` and Streamer Info flags the hostname as guessed. |
 | `INTEL_WATCHER_HLS_INTERNAL_URL` | `""` (disabled) | Optional. Internal base URL where *Alliance Auth itself* can reach MediaMTX's HLS port - e.g. `http://127.0.0.1:8888` (bare metal) or `http://mediamtx:8888` (Docker). When set, `api_status` cross-checks `is_live` against MediaMTX and clears streams whose playlist 404s, which self-heals stale "live" tiles after a missed unpublish webhook or a MediaMTX restart. |
+
+### Two hostnames: web vs RTMP
+
+Many deployments end up needing **two** different DNS names:
+
+| Purpose | Example | Notes |
+| --- | --- | --- |
+| Alliance Auth website | `https://auth.example.com` | Normal HTTPS. Commonly proxied (Cloudflare, CDN, load balancer). |
+| MediaMTX RTMP | `rtmp://media.example.com:1935/live` | Must resolve **directly** to the MediaMTX host. |
+
+A normal HTTP/HTTPS proxy or CDN does not forward arbitrary TCP ports, so if
+OBS is pointed at the website hostname it fails before the connection ever
+reaches MediaMTX - and nothing shows up in either `mediamtx` or
+`allianceauth_gunicorn` logs. If your web hostname is proxied (or MediaMTX
+runs elsewhere), create a dedicated DNS record for the media host - for
+Cloudflare DNS, that means **DNS only** (grey cloud), not proxied - and set:
+
+```python
+INTEL_WATCHER_RTMP_HOST = "media.example.com"
+```
+
+If the website hostname also accepts TCP/1935 directly (simple single-host
+installs, no proxy in front), the default request-host behaviour works and
+no setting is needed - silence `aa_intel_watcher.W001` via
+`SILENCED_SYSTEM_CHECKS` if the warning bothers you.
 
 ## Permissions
 
@@ -336,6 +390,24 @@ first-time playback requests 404 on `/live/...` instead of `/hls/live/...`.
 
 ## OBS / streamer setup
 
+Before anyone opens OBS, a new install should pass this checklist - each
+item is a different failure stage (see TROUBLESHOOTING.md):
+
+- [ ] `mediamtx` container/service is running (`docker ps --filter name=mediamtx`)
+- [ ] TCP/1935 is reachable from an external machine (`nc -vz <rtmp-host> 1935`)
+- [ ] The RTMP hostname resolves **directly** to the server - not through a
+      proxied/CDN hostname that only forwards HTTP(S)
+- [ ] "Streamer Info" shows the intended RTMP hostname
+      (`INTEL_WATCHER_RTMP_HOST`, or silence `aa_intel_watcher.W001` if the
+      web host genuinely accepts RTMP)
+- [ ] Project `urls.py` has the three direct routes (publish-auth,
+      unpublish, hls-auth) **above** `path("", include(urls))` - step 5
+- [ ] The internal hostname MediaMTX POSTs to (`allianceauth_gunicorn`,
+      `127.0.0.1`, or your alias) is in `ALLOWED_HOSTS` - step 6
+- [ ] MediaMTX and `allianceauth_gunicorn` share a Docker network / the
+      `authHTTPAddress` hostname resolves
+- [ ] The streamer is an active user with `aa_intel_watcher.can_stream`
+
 For members with `can_stream`:
 
 1. Log in to Alliance Auth and open **Intel Watcher -> Streamer Info**.
@@ -375,10 +447,11 @@ Then restart Alliance Auth (and reload nginx if you changed any of the
 
 ## Troubleshooting
 
-See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for known gotchas and the
-debugging log - e.g. why the webhook URLs must live in the project `urls.py`,
-not the app's `url_hook`, and how to diagnose "TCP/1935 is reachable but OBS
-can't publish".
+See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) - it starts with a staged
+diagnosis for "OBS can't publish" (first establish whether the connection
+even reached MediaMTX before touching Django), then documents the historical
+bug log: why the webhook URLs must live in the project `urls.py`, not the
+app's `url_hook`, the `ALLOWED_HOSTS`/`DisallowedHost` trap, and more.
 
 ## Licence
 

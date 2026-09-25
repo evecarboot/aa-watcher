@@ -8,3 +8,6 @@ class AaIntelWatcherConfig(AppConfig):
     name = "aa_intel_watcher"
     label = "aa_intel_watcher"
     verbose_name = f"Intel Watcher v{__version__}"
+
+    def ready(self):
+        from . import checks  # noqa: F401 - registers system checks

@@ -20,6 +20,15 @@
                 <button id="iw-regen-key" class="btn btn-sm btn-outline-warning mt-2">
                     Regenerate key
                 </button>
+                {% if rtmp_host_inferred %}
+                <p class="alert alert-warning small mt-3 mb-0">
+                    The server hostname above was guessed from this page's URL
+                    (<code>INTEL_WATCHER_RTMP_HOST</code> is not set). If OBS
+                    can't connect, ask an admin - sites behind Cloudflare or
+                    another HTTP-only proxy need a separate, direct hostname
+                    for RTMP configured explicitly.
+                </p>
+                {% endif %}
                 <p class="text-muted mt-2 mb-0">
                     Paste these two values into OBS's Stream settings - nothing else
                     to configure. Regenerating your key immediately invalidates the

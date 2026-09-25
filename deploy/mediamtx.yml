@@ -7,6 +7,12 @@
 # is bound to localhost so the only public-facing entry point is nginx
 # (see nginx-intel-watcher.conf). If you change rtmpAddress, keep the other
 # *_Address values locked to 127.0.0.1.
+#
+# If your Alliance Auth website hostname is behind a proxy/CDN that only
+# forwards HTTP(S) (e.g. Cloudflare), it cannot accept this RTMP traffic -
+# create a dedicated DNS record pointing DIRECTLY at this host (Cloudflare:
+# "DNS only", not proxied) and set INTEL_WATCHER_RTMP_HOST to it in
+# local.py, or OBS will be handed a hostname it can't connect to.
 
 rtmpAddress: :1935
 

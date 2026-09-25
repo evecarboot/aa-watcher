@@ -53,17 +53,36 @@ def index(request):
     return render(request, "aa_intel_watcher/index.html", context)
 
 
+def _request_hostname(request):
+    """Hostname part of request.get_host(), without the port."""
+    host = request.get_host()
+    if host.startswith("["):  # IPv6 literal: [::1]:8000
+        return host[1:].split("]")[0]
+    return host.split(":")[0]
+
+
 @login_required
 @permission_required("aa_intel_watcher.can_stream", raise_exception=True)
 def streamer_info(request):
     stream_key, _created = StreamKey.objects.get_or_create(user=request.user)
-    rtmp_host = getattr(settings, "INTEL_WATCHER_RTMP_HOST", None) or request.get_host().split(":")[0]
+    rtmp_host = getattr(settings, "INTEL_WATCHER_RTMP_HOST", None)
+    if rtmp_host:
+        rtmp_host_inferred = False
+    else:
+        # Fallback for simple installs where the web host also accepts RTMP.
+        # Behind a proxy/CDN that only forwards HTTP(S) (e.g. Cloudflare),
+        # this hostname is wrong and OBS fails before reaching MediaMTX -
+        # rtmp_host_inferred lets the template say so, and the
+        # aa_intel_watcher.W001 system check flags it at deploy time.
+        rtmp_host = _request_hostname(request)
+        rtmp_host_inferred = True
     context = {
         "can_stream": True,
         "active_tab": "streamer_info",
         "stream_key": stream_key.key,
         "rtmp_path": stream_key.path_name,
         "rtmp_server": f"rtmp://{rtmp_host}:1935/live",
+        "rtmp_host_inferred": rtmp_host_inferred,
     }
     return render(request, "aa_intel_watcher/streamer_info.html", context)
 

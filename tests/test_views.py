@@ -6,6 +6,7 @@ from unittest import mock
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.contrib.contenttypes.models import ContentType
+from django.http import HttpResponse
 from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
@@ -222,6 +223,71 @@ class PublishAuthTests(TestCase):
             post_auth(self.client, self.publish_payload())
         for record in cm.records:
             self.assertNotIn(self.key, record.getMessage())
+
+
+class StreamerInfoTests(TestCase):
+    """The RTMP server URL shown to streamers: explicit setting vs request
+    host fallback - the fallback is what silently breaks behind HTTP-only
+    proxies (Cloudflare etc.), so it must be flagged as inferred."""
+
+    def setUp(self):
+        self.user = grant(make_user(), "can_stream")
+        self.client.force_login(self.user)
+
+    def _context(self, host=None):
+        # tests/settings.py has no TEMPLATES (the base template lives in
+        # Alliance Auth), so intercept render() and inspect the context.
+        extra = {"HTTP_HOST": host} if host else {}
+        with mock.patch("aa_intel_watcher.views.render") as m:
+            m.return_value = HttpResponse()
+            self.client.get("/intel-watcher/streamer-info/", **extra)
+        self.assertTrue(m.called)
+        return m.call_args[0][2]
+
+    @override_settings(INTEL_WATCHER_RTMP_HOST="media.example.com")
+    def test_explicit_rtmp_host_used(self):
+        ctx = self._context(host="auth.example.com")
+        self.assertEqual(ctx["rtmp_server"], "rtmp://media.example.com:1935/live")
+        self.assertFalse(ctx["rtmp_host_inferred"])
+
+    def test_falls_back_to_request_host_flagged_inferred(self):
+        ctx = self._context(host="auth.example.com")
+        self.assertEqual(ctx["rtmp_server"], "rtmp://auth.example.com:1935/live")
+        self.assertTrue(ctx["rtmp_host_inferred"])
+
+    def test_request_host_port_stripped(self):
+        ctx = self._context(host="auth.example.com:8443")
+        self.assertEqual(ctx["rtmp_server"], "rtmp://auth.example.com:1935/live")
+
+    def test_ipv6_request_host(self):
+        ctx = self._context(host="[::1]:8000")
+        self.assertEqual(ctx["rtmp_server"], "rtmp://::1:1935/live")
+
+    def test_creates_stream_key(self):
+        self.assertFalse(
+            StreamKey.objects.filter(user=self.user).exists()
+        )
+        ctx = self._context()
+        self.assertTrue(
+            StreamKey.objects.filter(user=self.user).exists()
+        )
+        self.assertEqual(ctx["rtmp_path"], f"live/{ctx['stream_key']}")
+
+
+class RtmpHostCheckTests(TestCase):
+    def test_warns_when_unset(self):
+        from aa_intel_watcher.checks import rtmp_host_check
+
+        messages = rtmp_host_check(app_configs=None)
+        self.assertEqual(
+            [m.id for m in messages], ["aa_intel_watcher.W001"]
+        )
+
+    @override_settings(INTEL_WATCHER_RTMP_HOST="media.example.com")
+    def test_silent_when_set(self):
+        from aa_intel_watcher.checks import rtmp_host_check
+
+        self.assertEqual(rtmp_host_check(app_configs=None), [])
 
 
 class UnpublishTests(TestCase):

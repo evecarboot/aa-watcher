@@ -14,6 +14,13 @@
 #  * hlsAddress stays bound to all interfaces - the port is never published
 #    to the host, only reachable from other containers on the compose
 #    network (the `nginx` container, and the app for liveness checks).
+#
+# RTMP (1935) is published to the host by docker-compose.mediamtx.yml. If
+# your Alliance Auth website hostname is behind a proxy/CDN that only
+# forwards HTTP(S) (e.g. Cloudflare), it cannot accept RTMP - create a
+# dedicated DNS record pointing DIRECTLY at this host (Cloudflare: "DNS
+# only", not proxied) and set INTEL_WATCHER_RTMP_HOST to it in local.py, or
+# OBS will be handed a hostname it can't connect to.
 
 rtmpAddress: :1935
 

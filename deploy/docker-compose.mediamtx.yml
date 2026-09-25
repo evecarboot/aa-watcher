@@ -4,6 +4,9 @@
 # as your Alliance Auth stack, so it can reach the `allianceauth_gunicorn`
 # container by service name (Docker's built-in DNS) and be reached by the
 # `nginx` container the same way - no host networking/127.0.0.1 involved.
+# (Running MediaMTX as a SEPARATE compose project instead? Then both
+# projects must join a shared external network - see TROUBLESHOOTING.md.
+# Verify with: docker inspect mediamtx --format '{{json .NetworkSettings.Networks}}')
 #
 # The `deploy/` directory must sit next to your Alliance Auth
 # docker-compose.yml (copy it there from this repo) - relative paths below
@@ -70,7 +73,10 @@ services:
     ports:
       # RTMP - OBS needs to reach this directly, so it's published to the
       # host/public interface. Prefer restricting this to your corp's VPN
-      # or a security group rule if streamers connect over one.
+      # or a security group rule if streamers connect over one. If the
+      # Alliance Auth web hostname is proxied (Cloudflare etc.), publish a
+      # dedicated DNS-only hostname for this server and set
+      # INTEL_WATCHER_RTMP_HOST - see README "Two hostnames".
       - "1935:1935"
       # Deliberately NOT publishing 8888 (HLS) here - only the `nginx`
       # container (and allianceauth_gunicorn, for liveness checks if you set

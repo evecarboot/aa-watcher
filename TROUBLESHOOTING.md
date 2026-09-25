@@ -1,28 +1,210 @@
 # Intel Watcher — Troubleshooting Log
 
-This document records the bugs found and fixed along with
-the debugging techniques that found them. Keep it updated as new issues are
-found.
+This document has two halves:
+
+1. **Current diagnostics** — the staged failure-classification flow and
+   checks that apply to any deployment following the README.
+2. **Bug log** — historical incidents from the reference deployment where
+   this plugin was developed, kept for context. Some describe behaviour
+   that has since changed; each entry names its root cause and fix.
 
 ## Architecture recap
 
-- **Alliance Auth** (`allianceauth_gunicorn` container, alias `intelwatcher-auth`
-  on the `aa-docker_default` network) serves the Django app, including the
-  `aa_intel_watcher` plugin (views, chat, webhook receivers).
+This describes the *reference deployment* the bug log below was gathered
+on. The shipped `deploy/` samples differ slightly (see notes); always check
+the README/samples for current recommended layout.
+
+- **Alliance Auth** (`allianceauth_gunicorn` container, alias
+  `intelwatcher-auth` on the `aa-docker_default` network) serves the Django
+  app, including the `aa_intel_watcher` plugin (views, chat, webhook
+  receivers). The alias exists because this deployment added it to dodge an
+  underscore-hostname issue (Bug 2); the shipped samples just use the
+  `allianceauth_gunicorn` service name directly - either works as long as
+  it's in `ALLOWED_HOSTS`.
 - **MediaMTX** (separate compose project `~/mediamtx`, joined to
   `aa-docker_default` via the external network `aa_shared`) receives RTMP
   streams from OBS and re-serves them as HLS on port `8888`. It calls back
-  into Alliance Auth for publish/unpublish auth via
-  `authHTTPAddress: http://intelwatcher-auth:8000/intel-watcher/hooks/publish-auth/`.
-- **nginx** (`aa-docker-nginx-1`) is the public-facing reverse proxy on port 80,
-  fronting both Alliance Auth (`location /`) and MediaMTX's HLS output
+  into Alliance Auth for publish auth via
+  `authHTTPAddress: http://intelwatcher-auth:8000/intel-watcher/hooks/publish-auth/`
+  and fires `runOnUnavailable` at the unpublish hook. *Shipped layout:*
+  `deploy/docker-compose.mediamtx.yml` adds MediaMTX to the *same* compose
+  project as Alliance Auth, so no external network is needed; if you run it
+  as a separate project you must join both stacks to a shared external
+  network (like `aa_shared` here).
+- **nginx** (`aa-docker-nginx-1`) is the public-facing reverse proxy on port
+  80, fronting both Alliance Auth (`location /`) and MediaMTX's HLS output
   (`location /hls/`), gated by an internal `auth_request` sub-check against
-  Alliance Auth's `api_status` view.
+  Alliance Auth's **`hls_auth` endpoint** (`/intel-watcher/hls-auth/`).
+  (The sub-check used to point at `api_status` - see Bug 11.)
 - **Cloudflare** proxies `auth.example.com` (TLS terminates at Cloudflare;
   origin nginx only ever sees plain HTTP). `media.example.com` is **not**
-  proxied by Cloudflare (direct DNS to the droplet), which is why direct HLS
-  playback at `http://media.example.com:8888/...` always worked and was
-  useful as a "known-good" sanity check throughout this debugging.
+  proxied by Cloudflare (direct DNS to the server) - the same split the
+  README now prescribes for `INTEL_WATCHER_RTMP_HOST`. *Note:* at the time
+  of these bugs this deployment also had MediaMTX's `:8888` published, so
+  `http://media.example.com:8888/...` worked as a bypass sanity check. The
+  shipped config deliberately keeps `:8888` internal-only - don't publish
+  it; use a disposable container on the Docker network for direct HLS
+  checks instead (see "General debugging techniques").
+
+## OBS can't publish — staged diagnosis
+
+An OBS "Failed to connect" can originate at four different boundaries.
+Diagnose them in order - each stage that fails makes everything after it
+irrelevant:
+
+```
+Nothing in MediaMTX logs when OBS tries
+    -> DNS / proxy / firewall / TCP / wrong RTMP hostname
+MediaMTX sees the connection but rejects the publish
+    -> publish-auth route / ALLOWED_HOSTS / Docker networking
+publish-auth reachable but still denied
+    -> stream key / inactive user / can_stream
+```
+
+### Stage 1 - Does TCP/1935 reach the server?
+
+From the machine running OBS:
+
+```powershell
+# Windows
+Resolve-DnsName media.example.com
+Test-NetConnection media.example.com -Port 1935
+```
+
+```bash
+# Linux / macOS
+nc -vz media.example.com 1935
+```
+
+If this fails, **AA-Watcher permissions and stream keys are irrelevant** -
+OBS hasn't reached MediaMTX. Check, in order: DNS resolves to the right
+server IP; the record isn't proxied through something that only forwards
+HTTP(S) (see the Cloudflare note below); the host firewall/security group
+allows 1935; the port is actually published:
+
+```bash
+# on the server
+ss -lntp | grep 1935
+docker ps --filter name=mediamtx
+docker port mediamtx        # should show 1935 -> 0.0.0.0:1935
+```
+
+**Direct-IP isolation test:** point OBS at `rtmp://SERVER_PUBLIC_IP:1935/live`
+with the same stream key. If direct IP works but `media.example.com` doesn't,
+the problem is DNS/proxying/hostname resolution, not MediaMTX or Django.
+This is a diagnostic only - go back to a proper hostname once identified;
+raw-IP RTMP is not a recommended permanent setup.
+
+### Cloudflare / reverse-proxy note
+
+If your Alliance Auth hostname is proxied through a service that only
+handles your HTTP/HTTPS traffic, use a separate direct hostname for
+MediaMTX RTMP. For Cloudflare DNS this commonly means setting the
+media/RTMP record to **DNS only** (grey cloud) rather than normal proxy
+mode - unless you deliberately use a Cloudflare product/configuration that
+proxies the required TCP service. Then set
+`INTEL_WATCHER_RTMP_HOST = "media.example.com"` so streamers are handed the
+direct hostname instead of the website's.
+
+### Stage 2 - Did OBS reach MediaMTX?
+
+```bash
+docker logs --since=2m mediamtx
+```
+
+Run this, **then** click "Start Streaming" in OBS. If *nothing* new
+appears, the failure is before MediaMTX - go back to Stage 1. Do not start
+debugging Django permissions yet. (Real incident: a domain moved behind a
+Cloudflare-proxied hostname; OBS died at connect time and both `mediamtx`
+and `allianceauth_gunicorn` logs stayed completely silent - the request
+never reached either service.)
+
+If a connection/publish attempt *does* appear (MediaMTX logs
+`is publishing to path 'live/...'` followed by an auth result or a
+`closed:` line), continue.
+
+### Stage 3 - MediaMTX -> Alliance Auth publish-auth
+
+Watch both services while OBS tries:
+
+```bash
+docker logs --since=2m mediamtx
+docker compose logs --since=2m allianceauth_gunicorn
+```
+
+MediaMTX logs the outcome of its `authHTTPAddress` call; gunicorn logs
+`Intel Watcher: rejected publish ...` with a reason (never the key itself).
+
+To test the internal route directly, curl the endpoint from inside the
+Docker network. The shipped `mediamtx` image has curl, or use a disposable
+container on the right network:
+
+```bash
+# inside the mediamtx container (shipped image includes curl):
+docker exec mediamtx curl -sv -X POST \
+  http://allianceauth_gunicorn:8000/intel-watcher/hooks/publish-auth/ \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"read","protocol":"hls","path":"live/x"}'
+
+# or from a scratch container - find the network first:
+docker inspect mediamtx --format '{{json .NetworkSettings.Networks}}'
+docker run --rm --network <that-network> curlimages/curl \
+  curl -sv -X POST \
+  http://allianceauth_gunicorn:8000/intel-watcher/hooks/publish-auth/ \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"read","protocol":"hls","path":"live/x"}'
+```
+
+This payload is a **reachability test**, not a valid-stream test - a
+`read`/`hls` action deliberately returns 200 without credentials, proving
+the route, the Host header and the network path end-to-end. Interpreting
+the response:
+
+| Response | Meaning |
+| --- | --- |
+| `200`/`2xx` | Route reachable, webhook answered. Networking is fine - a real `publish` denied here is Stage 4. |
+| `400` | `DisallowedHost` (check gunicorn logs) - the `authHTTPAddress` hostname isn't in `ALLOWED_HOSTS`. Add `allianceauth_gunicorn` (or your alias) to it. Also possible: malformed request. |
+| `401`/`403` | Route reachable, auth *rejected* - e.g. a `publish` action with a bogus key. Go to Stage 4. |
+| `404` | The three direct routes were never added to the project `urls.py` (README step 5 / `deploy/urls.py`). |
+| `302` | The hooks are registered via the app's `url_hook` and wrapped in `login_required` - move them to the project `urls.py` (Bug 1). |
+| timeout | Docker network/hostname/service problem - MediaMTX can't reach the Django container at all. See below. |
+| connection refused | Hostname resolved but nothing listens there - wrong service/port, or gunicorn down. |
+
+**Docker networking:** MediaMTX and `allianceauth_gunicorn` must share a
+network and the `authHTTPAddress` hostname must resolve. The shipped
+overlay puts `mediamtx` in the same compose project, so this is automatic.
+If you run MediaMTX as a *separate* compose project, join both stacks to a
+shared external network (e.g. `docker network create aa_shared` +
+`external: true` on both projects' networks) - the reference deployment in
+the architecture recap does this. Verify with the `docker inspect` command
+above: both containers should appear on the same network name.
+
+If nginx's `auth_request` for `/hls/` fails rather than publish-auth, run
+the same curl against `/intel-watcher/hls-auth/` from the `nginx`
+container's network - a 401 there is expected for anonymous (the endpoint
+is working), a 302/404/500 means wiring problems as above.
+
+### Stage 4 - Key, user and permission
+
+Only after the webhook is proven reachable: a publish needs a valid stream
+key whose owner is an *active* user with `aa_intel_watcher.can_stream`.
+Check without printing the key:
+
+```bash
+docker compose exec allianceauth_gunicorn python manage.py shell -c "
+from aa_intel_watcher.models import StreamKey
+for s in StreamKey.objects.select_related('user'):
+    u = s.user
+    print(u.username, '| active:', u.is_active,
+          '| can_stream:', u.has_perm('aa_intel_watcher.can_stream'),
+          '| is_live:', s.is_live)
+"
+```
+
+- `can_stream: False` -> grant the permission in `/admin/` (group/state).
+- `active: False` -> re-enable the account.
+- Also confirm the streamer is using the key shown on *their* Streamer Info
+  page right now - a regenerated key invalidates the old one instantly.
 
 ## Bug 1 — `is_live` never flips to `True`
 
@@ -155,48 +337,13 @@ docker compose build --no-cache
 docker compose up -d --force-recreate
 ```
 
-Verify `is_live` state directly via Django shell:
+Verify `is_live` state directly via Django shell (doesn't print the key
+itself):
 
 ```bash
 docker compose exec allianceauth_gunicorn python manage.py shell -c \
-  "from aa_intel_watcher.models import StreamKey; [print(s.id, s.user_id, s.is_live, s.last_seen, s.path_name) for s in StreamKey.objects.all()]"
+  "from aa_intel_watcher.models import StreamKey; [print(s.user, s.is_live, s.last_seen) for s in StreamKey.objects.all()]"
 ```
-
-## Diagnosing "nc -vz server 1935 works but OBS can't publish"
-
-TCP/1935 being reachable only proves the port is open. OBS publishing goes
-RTMP -> MediaMTX -> HTTP publish-auth -> Django. Check in this order:
-
-1. **MediaMTX logs** - the publish attempt and the auth HTTP call's result
-   are both logged here:
-   ```bash
-   docker logs --tail=100 mediamtx
-   # look for "is publishing to path 'live/...'" then either an auth error
-   # or a "closed: ..." line
-   ```
-2. **Can MediaMTX reach the auth endpoint at all?**
-   ```bash
-   docker run --rm --network aa-docker_default curlimages/curl \
-     curl -sv -X POST http://allianceauth_gunicorn:8000/intel-watcher/hooks/publish-auth/ \
-     -H 'Content-Type: application/json' \
-     -d '{"action":"read","protocol":"hls","path":"live/x"}'
-   ```
-   Expect `200`. `400 DisallowedHost` means ALLOWED_HOSTS is missing the
-   internal hostname (see Bug 6 below - **the most likely cause**).
-   `404` means the webhook routes were never added to the project urls.py.
-   A redirect to `/account/login/` means the hooks are registered through
-   the app's `url_hook` instead of the project urls.py (Bug 1).
-   Connection refused/timeout means MediaMTX is on the wrong docker
-   network or the service name is wrong.
-3. **Alliance Auth logs** - a 400 DisallowedHost or a 403 from the view
-   shows up in gunicorn/Django logs:
-   ```bash
-   docker logs --tail=100 allianceauth_gunicorn
-   ```
-   The app logs `Intel Watcher: rejected publish ...` with the reason -
-   but never the stream key itself.
-4. **Permission check** - the key's owner must have `can_stream` and be an
-   active user. Revoked permission or disabled account -> publish denied.
 
 ## Bug 6 - DisallowedHost on the publish-auth webhook (repo-level fix)
 
@@ -321,6 +468,32 @@ live forever.
 metal, `http://mediamtx:8888` Docker) and `api_status` will probe each live
 stream's playlist - a definitive 404 (with a 15s grace period after
 publish) clears `is_live`. Unreachable MediaMTX never flips state.
+
+## Bug 15 - `fetch_hls_js` PermissionError in a vendored Docker install
+
+**Symptom:** `python manage.py fetch_hls_js --force` (and later
+`collectstatic` on the same files) crashed with `PermissionError` creating
+`.../static/aa_intel_watcher/js/hls.min.js.tmp`, inside a custom Alliance
+Auth image that vendors the plugin:
+
+```dockerfile
+COPY aa-watcher/aa_intel_watcher /home/allianceauth/.local/lib/python3.12/site-packages/aa_intel_watcher
+```
+
+**Root cause:** `COPY` produces root-owned files, but the container runs as
+`allianceauth`. `fetch_hls_js` writes into the package's own static folder,
+which the worker can't write to.
+
+**Fix:** own the files at copy time:
+
+```dockerfile
+COPY --chown=allianceauth:allianceauth aa-watcher/aa_intel_watcher /home/allianceauth/.local/lib/python3.12/site-packages/aa_intel_watcher
+```
+
+Applies to any vendored/manual install - the pip-install path can't hit
+this because pip installs with the right ownership. Bare-metal equivalent:
+run `fetch_hls_js` as the same user gunicorn runs as, or `chown -R` the
+package dir.
 
 ## General debugging techniques that worked well
 
