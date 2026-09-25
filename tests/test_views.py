@@ -367,6 +367,27 @@ class UnpublishTests(TestCase):
         self.stream_key.refresh_from_db()
         self.assertFalse(self.stream_key.is_live)
 
+    def test_unpublish_any_source_id_when_session_untracked(self):
+        # If the live session id was never recorded (empty), a callback
+        # carrying *some* source_id must still clear the stream - the
+        # session guard only applies when we actually know the live id.
+        self.go_live(session_id="")
+        r = self.unpublish(source_id="anything")
+        self.assertEqual(r.status_code, 200)
+        self.stream_key.refresh_from_db()
+        self.assertFalse(self.stream_key.is_live)
+
+    def test_republish_replaces_tracked_session(self):
+        # A re-publish rotates live_session_id; the OLD session's late
+        # unpublish must then be ignored, the new one honoured.
+        self.go_live(session_id="s2")
+        r = self.unpublish(source_id="s1")
+        self.stream_key.refresh_from_db()
+        self.assertTrue(self.stream_key.is_live)
+        r = self.unpublish(source_id="s2")
+        self.stream_key.refresh_from_db()
+        self.assertFalse(self.stream_key.is_live)
+
     def test_regenerated_key_unpublish_matches_live_key(self):
         # stream went live with old key, key was regenerated, then the
         # stream ends: MediaMTX reports the OLD key in the path.

@@ -56,8 +56,11 @@ paths:
     # publisher connection's UUID, same as the `id` field sent to the auth
     # endpoint). source_id lets the app ignore stale callbacks when a
     # streamer reconnects quickly.
+    # -sS stays quiet on success but still prints errors (DNS, refused,
+    # timeout) to MediaMTX's log - a silently failing hook is exactly how
+    # "stream stops but is_live stays True" goes unnoticed.
     runOnUnavailable: >
-      curl -s --max-time 10 -X POST http://127.0.0.1:8000/intel-watcher/hooks/unpublish/
+      curl -sS --max-time 10 -X POST http://127.0.0.1:8000/intel-watcher/hooks/unpublish/
       -H "X-Webhook-Secret: CHANGE_ME"
       --data-urlencode "path=$MTX_PATH"
       --data-urlencode "source_id=$MTX_SOURCE_ID"

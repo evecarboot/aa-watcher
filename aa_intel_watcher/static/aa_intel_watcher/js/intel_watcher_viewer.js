@@ -23,9 +23,11 @@
         backBufferLength: 60,
     };
 
-    // hls_url -> { el, video, hls, driftTimer }
+    // hls_url -> { el, video, hls, driftTimer, soloBtn, tabfsBtn, nameEl }
     const tiles = new Map();
     let anyUnmutedYet = false;
+    // The one tile currently expanded to fill the browser tab (or null).
+    let tabfsTile = null;
 
     function soloAudio(key) {
         tiles.forEach((tile, tileKey) => {
@@ -37,6 +39,59 @@
         });
         anyUnmutedYet = true;
     }
+
+    // --- Tab fullscreen --------------------------------------------------
+    // Expands one tile over the whole browser viewport using plain CSS
+    // (position: fixed; inset: 0). requestFullscreen() is deliberately NOT
+    // used: browser tabs, the address bar and the OS desktop stay visible.
+    // The video element is never reparented or reloaded, so playback and
+    // the muted/solo state are untouched.
+    function syncTabFSButton(tile) {
+        const active = tile === tabfsTile;
+        tile.tabfsBtn.textContent = active ? "Exit tab fullscreen" : "Tab fullscreen";
+        tile.tabfsBtn.setAttribute("aria-pressed", active ? "true" : "false");
+    }
+
+    function enterTabFS(tile) {
+        if (tabfsTile === tile) {
+            return;
+        }
+        exitTabFS(); // only one tile can occupy the tab at a time
+        tabfsTile = tile;
+        tile.el.classList.add("iw-tabfs");
+        document.body.classList.add("iw-tabfs-lock");
+        syncTabFSButton(tile);
+        tile.tabfsBtn.focus();
+    }
+
+    function exitTabFS() {
+        const tile = tabfsTile;
+        if (!tile) {
+            return;
+        }
+        tabfsTile = null;
+        tile.el.classList.remove("iw-tabfs");
+        document.body.classList.remove("iw-tabfs-lock");
+        syncTabFSButton(tile);
+        tile.tabfsBtn.focus();
+        // Recompute layout for whatever is live NOW - the stream count may
+        // have changed while the overlay was up.
+        updateGridLayout();
+    }
+
+    function toggleTabFS(tile) {
+        if (tile === tabfsTile) {
+            exitTabFS();
+        } else {
+            enterTabFS(tile);
+        }
+    }
+
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && tabfsTile) {
+            exitTabFS();
+        }
+    });
 
     function bindPlaybackRecovery(video, tryPlay) {
         // Browser decoders occasionally enter stalled/waiting states on
@@ -142,24 +197,38 @@
         name.textContent = stream.display_name;
         label.appendChild(name);
 
+        const actions = document.createElement("div");
+        actions.className = "iw-tile-actions";
+
         const soloBtn = document.createElement("button");
         soloBtn.type = "button";
         soloBtn.className = "btn btn-sm btn-outline-secondary";
         soloBtn.textContent = "\uD83D\uDD07 Solo audio";
-        label.appendChild(soloBtn);
+        actions.appendChild(soloBtn);
 
+        const tabfsBtn = document.createElement("button");
+        tabfsBtn.type = "button";
+        tabfsBtn.className = "btn btn-sm btn-outline-secondary";
+        tabfsBtn.setAttribute("aria-label", "Expand " + stream.display_name + " to fill the browser tab");
+        tabfsBtn.setAttribute("aria-pressed", "false");
+        tabfsBtn.textContent = "Tab fullscreen";
+        actions.appendChild(tabfsBtn);
+
+        label.appendChild(actions);
         col.appendChild(label);
-        grid.appendChild(col);
 
         const tile = {
             el: col,
             video,
             hls: null,
             soloBtn,
+            tabfsBtn,
             nameEl: name,
             driftTimer: setInterval(() => snapNearLive(video), DRIFT_CHECK_INTERVAL_MS)
         };
         soloBtn.addEventListener("click", () => soloAudio(stream.hls_url));
+        tabfsBtn.addEventListener("click", () => toggleTabFS(tile));
+        video.addEventListener("dblclick", () => toggleTabFS(tile));
 
         if (window.Hls && window.Hls.isSupported()) {
             const hls = new window.Hls(HLS_CONFIG);
@@ -178,16 +247,31 @@
 
         video.addEventListener("canplay", () => snapNearLive(video));
 
+        // Append last: if anything above throws, no orphaned DOM node is
+        // left outside the tiles map (where refreshStatus could never
+        // remove it).
+        grid.appendChild(col);
         return tile;
     }
 
     function destroyTile(tile) {
+        // Leaving tab fullscreen must happen before the node goes away so
+        // body scroll-lock and the reference are always released.
+        if (tile === tabfsTile) {
+            exitTabFS();
+        }
         if (tile.driftTimer) {
             clearInterval(tile.driftTimer);
         }
         if (tile.hls) {
             tile.hls.destroy();
         }
+        // Release media resources on the native-HLS fallback path too -
+        // hls.destroy() only covers the hls.js case. pause + empty src +
+        // load() tells the browser to stop fetching/decoding entirely.
+        tile.video.pause();
+        tile.video.removeAttribute("src");
+        tile.video.load();
         tile.el.remove();
     }
 
@@ -226,7 +310,11 @@
                 // Add tiles for newly live streams / refresh names.
                 streams.forEach((stream) => {
                     if (!tiles.has(stream.hls_url)) {
-                        tiles.set(stream.hls_url, createTile(stream));
+                        try {
+                            tiles.set(stream.hls_url, createTile(stream));
+                        } catch (err) {
+                            console.error("Intel Watcher: failed to create stream tile", err);
+                        }
                     } else {
                         const tile = tiles.get(stream.hls_url);
                         if (tile.nameEl.textContent !== stream.display_name) {
@@ -265,4 +353,3 @@
     refreshStatus();
     setInterval(refreshStatus, STATUS_POLL_MS);
 })();
-

@@ -42,9 +42,64 @@
     margin-top: 0.5rem;
 }
 
+.iw-tile-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
 .iw-tile-name {
     font-weight: 600;
     overflow-wrap: anywhere;
+}
+
+/* --- Tab fullscreen -----------------------------------------------------
+   "Tab fullscreen" is a plain CSS overlay (position: fixed, inset: 0), not
+   the Fullscreen API - browser tabs and chrome stay visible. z-index sits
+   above Bootstrap's fixed/sticky navbars (1030 and below) and below
+   modals/offcanvas (1045+). */
+body.iw-tabfs-lock {
+    overflow: hidden;
+}
+
+.iw-tile.iw-tabfs {
+    position: fixed;
+    inset: 0;
+    z-index: 1040;
+    width: 100% !important;
+    max-width: 100% !important;
+    flex-basis: auto !important;
+    margin: 0;
+    background: var(--bs-body-bg, #000);
+}
+
+.iw-tile.iw-tabfs .ratio {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+
+/* The .ratio aspect spacer is replaced by object-fit on the video. */
+.iw-tile.iw-tabfs .ratio::before {
+    display: none;
+}
+
+.iw-tile.iw-tabfs video {
+    object-fit: contain;
+}
+
+.iw-tile.iw-tabfs .iw-tile-meta {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    margin: 0;
+    padding: 0.6rem 1rem;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    z-index: 1;
 }
 
 @media (max-width: 575.98px) {

@@ -45,6 +45,12 @@ Requires Alliance Auth **5.x** (tested against 5.2).
 - **Multiple simultaneous streamers:** each live streamer gets their own tile
   with independent native video controls. A "Solo audio" button on each tile
   mutes every other tile.
+- **Tab fullscreen:** each tile has a *Tab fullscreen* button (double-click
+  works too) that expands the stream to fill the whole browser tab without
+  invoking browser/OS fullscreen - tabs and the address bar stay visible.
+  Escape or *Exit tab fullscreen* leaves it; native video fullscreen remains
+  available alongside it. If the stream stops while expanded, the overlay
+  closes itself.
 - **Theming:** every template extends `allianceauth/base-bs5.html` and only uses
   standard Bootstrap classes, so the app automatically matches whatever
   Bootswatch theme a user has selected in Alliance Auth - nothing to configure.
@@ -271,7 +277,7 @@ you use).
 | `INTEL_WATCHER_MEDIAMTX_SECRET` | `""` (empty) | **Required.** Shared secret MediaMTX must send back on the `unpublish` webhook (via the `X-Webhook-Secret` header). Generate with `openssl rand -hex 32`. Must match the value in your `mediamtx.yml`. |
 | `INTEL_WATCHER_HLS_BASE_URL` | `"/hls"` | Public base URL where nginx reverse-proxies MediaMTX's HLS output. Only change it if you also change the nginx `location /hls/` block. |
 | `INTEL_WATCHER_RTMP_HOST` | hostname of the current request | Hostname shown to streamers in "Streamer Info" (`rtmp://<host>:1935/live`). **Set this explicitly whenever the Alliance Auth website hostname can't accept RTMP TCP/1935** - typically because it's proxied through a service that only forwards HTTP(S) (Cloudflare, a CDN, a load balancer), or because MediaMTX runs on different infrastructure. See [Two hostnames](#two-hostnames-web-vs-rtmp) below. If left unset, `manage.py check` emits `aa_intel_watcher.W001` and Streamer Info flags the hostname as guessed. |
-| `INTEL_WATCHER_HLS_INTERNAL_URL` | `""` (disabled) | Optional. Internal base URL where *Alliance Auth itself* can reach MediaMTX's HLS port - e.g. `http://127.0.0.1:8888` (bare metal) or `http://mediamtx:8888` (Docker). When set, `api_status` cross-checks `is_live` against MediaMTX and clears streams whose playlist 404s, which self-heals stale "live" tiles after a missed unpublish webhook or a MediaMTX restart. |
+| `INTEL_WATCHER_HLS_INTERNAL_URL` | `""` (disabled) | **Recommended.** Internal base URL where *Alliance Auth itself* can reach MediaMTX's HLS port - e.g. `http://127.0.0.1:8888` (bare metal) or `http://mediamtx:8888` (Docker). When set, `api_status` cross-checks `is_live` against MediaMTX and clears streams whose playlist 404s, which self-heals stale "live" tiles after a missed unpublish webhook or a MediaMTX restart. Without it, a stream whose unpublish webhook never lands stays marked live (and on viewers' screens) until manually cleared - see TROUBLESHOOTING.md "Stream stops but the tile stays". |
 
 ### Two hostnames: web vs RTMP
 

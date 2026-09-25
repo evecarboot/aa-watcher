@@ -206,6 +206,68 @@ for s in StreamKey.objects.select_related('user'):
 - Also confirm the streamer is using the key shown on *their* Streamer Info
   page right now - a regenerated key invalidates the old one instantly.
 
+## Stream stops but the tile stays
+
+Expected chain when OBS stops: MediaMTX source drops -> `runOnUnavailable`
+fires the unpublish hook -> `mediamtx_unpublish` clears `is_live` ->
+`api_status` stops returning the stream -> the viewer's 3-second poll
+removes the tile. Work that chain top-down.
+
+**1. Did MediaMTX run the unpublish hook?**
+
+```bash
+docker logs --since=2m mediamtx
+```
+
+Look for hook execution around the disconnect. The shipped configs run
+`curl -sS`, so a failing hook prints its reason here - `exec: "curl":
+executable file not found` (wrong image), `Could not resolve host` (wrong
+hostname/network), `Connection refused`/`timed out` (gunicorn down or
+unreachable). Silent `curl` versions hide all of these - that's why the
+samples use `-sS`.
+
+**2. Did Alliance Auth receive and accept it?**
+
+```bash
+docker compose logs --since=2m allianceauth_gunicorn
+```
+
+A `403`/`Intel Watcher: denied` means the `X-Webhook-Secret` header doesn't
+match `INTEL_WATCHER_MEDIAMTX_SECRET` (unset on either side, or `CHANGE_ME`
+still in the generated `conf/mediamtx.yml`). A `302` to the login page
+means the hook URLs are registered through the app `url_hook` instead of
+the project `urls.py` - curl follows the redirect, sees the login page's
+200 and reports fake success, so nothing is ever cleared. No request at
+all returns you to step 1.
+
+**3. What does the database think?** (safe - prints no key material):
+
+```bash
+docker compose exec allianceauth_gunicorn python manage.py shell -c "
+from aa_intel_watcher.models import StreamKey
+for s in StreamKey.objects.select_related('user'):
+    print(s.user.username, '| is_live:', s.is_live,
+          '| session tracked:', bool(s.live_session_id),
+          '| last_seen:', s.last_seen)
+"
+```
+
+- `is_live: True` long after the stream stopped -> the unpublish path
+  failed (steps 1-2), or a stale-callback guard skipped it (only possible
+  if the hook's `source_id` doesn't match the live session - legitimate
+  protection, see Bug 8; check mediamtx's `MTX_SOURCE_ID` vs the auth `id`).
+- `is_live: False` but the tile is still on screen -> the *frontend* is at
+  fault: open the browser console and fetch
+  `/intel-watcher/api/status/` manually - if it returns `{"streams":[]}`,
+  the tile should vanish within ~3s.
+
+**4. Safety net:** set `INTEL_WATCHER_HLS_INTERNAL_URL`
+(`http://127.0.0.1:8888` bare metal, `http://mediamtx:8888` Docker). Then
+`api_status` probes each "live" stream's playlist and clears state itself
+after a ~15s grace period when MediaMTX definitively 404s - covering a
+missed webhook or MediaMTX restart. Without it there is no second line of
+defence: state only changes when the unpublish hook succeeds.
+
 ## Bug 1 — `is_live` never flips to `True`
 
 **Symptom:** Streamer goes live in OBS, MediaMTX accepts the stream fine, but
