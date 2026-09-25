@@ -39,7 +39,9 @@ Requires Alliance Auth **5.x** (tested against 5.2).
   publish/unpublish; the page polls a small JSON endpoint and swaps the player
   to whichever approved streamer is currently live.
 - **Chat:** plain polling AJAX chat stored in the Alliance Auth database. No
-  websockets/Channels/Redis pub-sub required.
+  websockets/Channels/Redis pub-sub required. Sits beside the stream grid on
+  wide windows and stacks below it on narrow ones; admins can disable it
+  site-wide and viewers can hide it per-browser.
 - **Who can view (`basic_access` permission):** gates both the page and, via the
   nginx sample, the actual video segments - not just the UI around them.
 - **Multiple simultaneous streamers:** each live streamer gets their own tile
@@ -303,6 +305,16 @@ If the website hostname also accepts TCP/1935 directly (simple single-host
 installs, no proxy in front), the default request-host behaviour works and
 no setting is needed - silence `aa_intel_watcher.W001` via
 `SILENCED_SYSTEM_CHECKS` if the warning bothers you.
+
+### Site settings (Alliance Auth admin)
+
+Administrators can toggle Intel Watcher chat site-wide in the admin:
+**Intel Watcher settings -> Enable chat** (under the `AA_INTEL_WATCHER`
+app). Chat is **enabled by default**, including for existing installs
+after upgrade. Disabling it removes the chat UI and polling, lets the
+stream grid use the full content width, and makes the chat endpoint
+return 404 - no restart required, the change takes effect on the next
+request/page load.
 
 ## Permissions
 

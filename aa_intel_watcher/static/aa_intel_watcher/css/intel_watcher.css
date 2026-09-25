@@ -4,6 +4,38 @@
 
 .iw-viewer-main {
     min-width: 0;
+    /* Lets @container rules below react to the *content area* width, not
+       the monitor - Alliance Auth's own sidebar already eats horizontal
+       space, so viewport width is the wrong thing to measure. */
+    container-type: inline-size;
+}
+
+.iw-workspace-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.5rem;
+}
+
+/* The viewer workspace: streams + one global chat. Single column by
+   default (chat stacks below); beside the streams when there's room. */
+.iw-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+}
+
+.iw-streams {
+    min-width: 0;
+}
+
+/* User "Hide chat" state: drop the column entirely, streams take all of
+   the width. (Admin-disabled chat never renders .iw-chat at all.) */
+.iw-workspace.iw-chat-off .iw-chat {
+    display: none;
+}
+
+.iw-chat {
+    margin-top: 0;
 }
 
 .iw-video-grid {
@@ -120,4 +152,88 @@ body.iw-tabfs-lock {
 
 .iw-chat-user {
     font-weight: 600;
+}
+
+/* --- Wide layout --------------------------------------------------------
+   Enough content-area room -> streams left, chat right, one viewport-high
+   workspace. The breakpoint is on the content column (container query),
+   not the physical window. Roughly: content wider than ~58rem keeps a
+   usable stream pane next to a 20-24rem chat. */
+@container (min-width: 58rem) {
+    .iw-workspace--chat:not(.iw-chat-off) {
+        grid-template-columns: minmax(0, 1fr) minmax(19rem, 23rem);
+    }
+
+    /* Only grow to viewport height when there's something to show - an
+       empty grid with chat hidden shouldn't leave a giant blank pane.
+       13rem approximates the AA navbar + tabs + page padding above us;
+       min-height keeps very short windows sane. */
+    .iw-workspace:has(.iw-tile),
+    .iw-workspace:not(.iw-chat-off):has(.iw-chat) {
+        height: calc(100vh - 13rem);
+        min-height: 30rem;
+    }
+
+    .iw-streams {
+        height: 100%;
+        min-height: 0;
+        overflow-y: auto;
+    }
+
+    /* Streams become a real grid that fits the pane instead of the 16:9
+       box pushing everything else down. Aspect ratio is kept by
+       object-fit: contain on the video itself. */
+    .iw-video-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+        grid-auto-rows: minmax(11rem, 1fr);
+        gap: 1rem;
+        height: 100%;
+    }
+
+    .iw-video-grid > .iw-tile {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    .iw-video-grid > .iw-tile .ratio {
+        flex: 1 1 auto;
+        position: relative;
+        min-height: 0;
+    }
+
+    .iw-video-grid > .iw-tile .ratio::before {
+        display: none;
+    }
+
+    .iw-video-grid > .iw-tile video {
+        object-fit: contain;
+    }
+
+    .iw-video-grid > .iw-tile .iw-tile-meta {
+        margin-top: 0.5rem;
+    }
+
+    /* Chat as a side panel: header + scrollable history + pinned input.
+       Only .iw-chat-messages scrolls - never the whole page. */
+    .iw-chat {
+        height: 100%;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .iw-chat .card-body {
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    .iw-chat-messages {
+        flex: 1 1 auto;
+        min-height: 0;
+        max-height: none;
+        overflow-y: auto;
+    }
 }

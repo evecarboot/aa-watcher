@@ -3,20 +3,32 @@
 
 {% block iw_content %}
 <div class="iw-viewer-main">
-    <div id="iw-empty-state" class="text-muted">Nobody is live right now.</div>
-    <div id="iw-video-grid" class="iw-video-grid"></div>
-</div>
-
-<div class="card mt-3 iw-chat">
-    <div class="card-header">Chat</div>
-    <div class="card-body p-2">
-        <div id="iw-chat-messages" class="iw-chat-messages"></div>
-        <form id="iw-chat-form" class="d-flex gap-2 mt-2" autocomplete="off">
-            <input id="iw-chat-input" type="text" class="form-control form-control-sm"
-                   maxlength="500" placeholder="Message" required>
-            <button type="submit" class="btn btn-sm btn-primary">Send</button>
-        </form>
-        <div id="iw-chat-status" class="text-muted small mt-1 d-none"></div>
+    {% if chat_enabled %}
+    <div class="iw-workspace-toolbar">
+        <button id="iw-chat-toggle" type="button"
+                class="btn btn-sm btn-outline-secondary"
+                aria-pressed="false">Hide chat</button>
+    </div>
+    {% endif %}
+    <div class="iw-workspace{% if chat_enabled %} iw-workspace--chat{% endif %}">
+        <div class="iw-streams">
+            <div id="iw-empty-state" class="text-muted">Nobody is live right now.</div>
+            <div id="iw-video-grid" class="iw-video-grid"></div>
+        </div>
+        {% if chat_enabled %}
+        <div class="card iw-chat">
+            <div class="card-header">Chat</div>
+            <div class="card-body p-2 d-flex flex-column">
+                <div id="iw-chat-messages" class="iw-chat-messages"></div>
+                <form id="iw-chat-form" class="d-flex gap-2 mt-2" autocomplete="off">
+                    <input id="iw-chat-input" type="text" class="form-control form-control-sm"
+                           maxlength="500" placeholder="Message" required>
+                    <button type="submit" class="btn btn-sm btn-primary">Send</button>
+                </form>
+                <div id="iw-chat-status" class="text-muted small mt-1 d-none"></div>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}
@@ -39,10 +51,10 @@
     <script>
         window.INTEL_WATCHER = {
             statusUrl: "{% url 'aa_intel_watcher:api_status' %}",
-            chatUrl: "{% url 'aa_intel_watcher:api_chat' %}",
+            {% if chat_enabled %}chatUrl: "{% url 'aa_intel_watcher:api_chat' %}",{% endif %}
             csrfToken: "{{ csrf_token }}"
         };
     </script>
     <script src="{% static 'aa_intel_watcher/js/intel_watcher_viewer.js' %}"></script>
-    <script src="{% static 'aa_intel_watcher/js/intel_watcher_chat.js' %}"></script>
+    {% if chat_enabled %}<script src="{% static 'aa_intel_watcher/js/intel_watcher_chat.js' %}"></script>{% endif %}
 {% endblock %}

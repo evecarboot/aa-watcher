@@ -6,7 +6,33 @@
     const form = document.getElementById("iw-chat-form");
     const input = document.getElementById("iw-chat-input");
     const statusEl = document.getElementById("iw-chat-status");
+    const toggleBtn = document.getElementById("iw-chat-toggle");
+    const workspace = document.querySelector(".iw-workspace");
+    const HIDE_KEY = "iw-chat-hidden";
     const POLL_MS = 3000;
+
+    // "Hide chat" is a per-browser viewing preference only - it never
+    // touches the admin setting, and polling keeps running so returning
+    // the panel shows current history.
+    if (toggleBtn && workspace) {
+        const applyHidden = (hidden) => {
+            workspace.classList.toggle("iw-chat-off", hidden);
+            toggleBtn.textContent = hidden ? "Show chat" : "Hide chat";
+            toggleBtn.setAttribute("aria-pressed", hidden ? "true" : "false");
+        };
+        let hidden = false;
+        try {
+            hidden = localStorage.getItem(HIDE_KEY) === "1";
+        } catch (_e) { /* storage unavailable - session-only toggle */ }
+        applyHidden(hidden);
+        toggleBtn.addEventListener("click", () => {
+            hidden = !workspace.classList.contains("iw-chat-off");
+            applyHidden(hidden);
+            try {
+                localStorage.setItem(HIDE_KEY, hidden ? "1" : "0");
+            } catch (_e) { /* ignore */ }
+        });
+    }
 
     if (!cfg || !cfg.chatUrl || !listEl || !form || !input) {
         return;

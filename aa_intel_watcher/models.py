@@ -21,6 +21,44 @@ class General(models.Model):
         )
 
 
+class IntelWatcherSettings(models.Model):
+    """Site-wide Intel Watcher configuration, edited in the Alliance Auth admin.
+
+    Singleton by convention: the effective row is always pk=1, `save()`
+    forces that pk, and the admin hides add/delete so the row can only ever
+    be created once. No row existing at all (fresh install, pre-migration
+    data) means "everything default" - chat enabled.
+    """
+
+    chat_enabled = models.BooleanField(
+        default=True,
+        help_text=(
+            "Show the Intel Watcher chat box next to the stream grid. "
+            "Uncheck to disable chat site-wide - viewers see the full-width "
+            "stream area and the chat endpoint stops responding."
+        ),
+    )
+
+    class Meta:
+        verbose_name = "Intel Watcher settings"
+        verbose_name_plural = "Intel Watcher settings"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        """Return the settings row if it exists, else None."""
+        return cls.objects.filter(pk=1).first()
+
+    @classmethod
+    def chat_is_enabled(cls):
+        """Effective chat flag - defaults to enabled with no settings row."""
+        row = cls.load()
+        return row.chat_enabled if row else True
+
+
 class StreamKey(models.Model):
     """Per-user OBS stream key and live status."""
 

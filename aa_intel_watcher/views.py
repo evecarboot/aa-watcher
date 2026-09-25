@@ -7,13 +7,18 @@ import urllib.request
 from django.conf import settings
 from django.contrib.auth.decorators import login_required, permission_required
 from django.db.models import Q
-from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
+from django.http import (
+    Http404,
+    HttpResponse,
+    HttpResponseForbidden,
+    JsonResponse,
+)
 from django.shortcuts import render
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
-from .models import ChatMessage, StreamKey
+from .models import ChatMessage, IntelWatcherSettings, StreamKey
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +54,7 @@ def index(request):
     context = {
         "can_stream": request.user.has_perm("aa_intel_watcher.can_stream"),
         "active_tab": "viewing",
+        "chat_enabled": IntelWatcherSettings.chat_is_enabled(),
     }
     return render(request, "aa_intel_watcher/index.html", context)
 
@@ -174,6 +180,8 @@ def api_status(request):
 @require_http_methods(["GET", "POST"])
 def api_chat(request):
     """GET polls for new messages since ?since=<id>. POST sends a message."""
+    if not IntelWatcherSettings.chat_is_enabled():
+        raise Http404
     if request.method == "POST":
         message = (request.POST.get("message") or "").strip()
         if not message:

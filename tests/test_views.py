@@ -10,7 +10,12 @@ from django.http import HttpResponse
 from django.test import Client, TestCase, override_settings
 from django.utils import timezone
 
-from aa_intel_watcher.models import ChatMessage, General, StreamKey
+from aa_intel_watcher.models import (
+    ChatMessage,
+    General,
+    IntelWatcherSettings,
+    StreamKey,
+)
 
 User = get_user_model()
 
@@ -589,6 +594,98 @@ class ChatTests(TestCase):
         msgs = self.client.get(CHAT_URL).json()["messages"]
         # stored/returned verbatim - the frontend renders via textContent
         self.assertEqual(msgs[0]["message"], payload)
+
+
+class ChatDisabledTests(TestCase):
+    """Admin-disabled chat: the endpoint acts like it doesn't exist, while
+    auth/permission handling is unchanged (anon still redirects, missing
+    permission still 403s)."""
+
+    def setUp(self):
+        IntelWatcherSettings.objects.create(chat_enabled=False)
+        self.user = grant(make_user(), "basic_access")
+        self.client.force_login(self.user)
+
+    def test_get_disabled_returns_404(self):
+        self.assertEqual(self.client.get(CHAT_URL).status_code, 404)
+
+    def test_post_disabled_returns_404(self):
+        self.assertEqual(
+            self.client.post(CHAT_URL, {"message": "hi"}).status_code, 404
+        )
+
+    def test_permissions_still_enforced_when_disabled(self):
+        self.client.logout()
+        self.assertEqual(self.client.get(CHAT_URL).status_code, 302)
+        self.client.force_login(make_user(username="noperm"))
+        self.assertEqual(self.client.get(CHAT_URL).status_code, 403)
+
+    def test_reenable_restores_chat(self):
+        s = IntelWatcherSettings.load()
+        s.chat_enabled = True
+        s.save()
+        self.assertEqual(self.client.get(CHAT_URL).status_code, 200)
+
+
+class IntelWatcherSettingsTests(TestCase):
+    def test_defaults_to_enabled_without_row(self):
+        self.assertTrue(IntelWatcherSettings.chat_is_enabled())
+
+    def test_save_forces_singleton_pk(self):
+        IntelWatcherSettings.objects.create(chat_enabled=True)
+        s = IntelWatcherSettings.load()
+        s.chat_enabled = False
+        s.save()
+        self.assertEqual(s.pk, 1)
+        self.assertEqual(IntelWatcherSettings.objects.count(), 1)
+        self.assertFalse(IntelWatcherSettings.chat_is_enabled())
+
+    def test_second_row_cannot_exist(self):
+        from django.db import IntegrityError, transaction
+
+        IntelWatcherSettings.objects.create()
+        # pk is forced to 1, so a second row violates the PK constraint.
+        # Inner atomic() = savepoint, so the outer test transaction survives.
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                IntelWatcherSettings.objects.create()
+        self.assertEqual(IntelWatcherSettings.objects.count(), 1)
+
+    def test_admin_singleton_permissions(self):
+        from aa_intel_watcher.admin import IntelWatcherSettingsAdmin
+        from django.contrib import admin
+
+        model_admin = IntelWatcherSettingsAdmin(
+            IntelWatcherSettings, admin.site
+        )
+        request = mock.Mock()
+        self.assertTrue(model_admin.has_add_permission(request))
+        IntelWatcherSettings.objects.create()
+        self.assertFalse(model_admin.has_add_permission(request))
+        self.assertFalse(model_admin.has_delete_permission(request))
+
+
+class IndexViewTests(TestCase):
+    """index context carries chat_enabled for the workspace template."""
+
+    def setUp(self):
+        self.user = grant(make_user(), "basic_access")
+        self.client.force_login(self.user)
+
+    def _context(self):
+        with mock.patch("aa_intel_watcher.views.render") as m:
+            m.return_value = HttpResponse()
+            self.client.get("/intel-watcher/")
+        return m.call_args[0][2]
+
+    def test_chat_enabled_by_default(self):
+        self.assertTrue(self._context()["chat_enabled"])
+
+    def test_chat_disabled_flag_reaches_template_context(self):
+        IntelWatcherSettings.objects.create(chat_enabled=False)
+        ctx = self._context()
+        self.assertFalse(ctx["chat_enabled"])
+        self.assertIn("can_stream", ctx)
 
 
 class RegenerateKeyTests(TestCase):
