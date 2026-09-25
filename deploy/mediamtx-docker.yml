@@ -1,11 +1,11 @@
 # MediaMTX config template for aa-intel-watcher - DOCKER variant.
 #
 # You don't need to copy or edit this file by hand: the `mediamtx-config`
-# helper container in docker-compose.mediamtx.yml reads this file, replaces
-# CHANGE_ME with your INTEL_WATCHER_MEDIAMTX_SECRET (from .env), and writes
-# the result to ./conf/mediamtx.yml automatically on every `docker compose
-# up`. Edit this template if you need to change anything else about
-# MediaMTX's config.
+# helper container in docker-compose.mediamtx.yml reads this file,
+# substitutes the webhook secret and the HLS CDN secret from your .env into
+# the two placeholder values below, and writes the result to
+# ./conf/mediamtx.yml automatically on every `docker compose up`. Edit this
+# template if you need to change anything else about MediaMTX's config.
 #
 # The differences from deploy/mediamtx.yml (bare metal):
 #  * Alliance Auth is reached via its Docker Compose service name
@@ -29,6 +29,7 @@ rtmpAddress: :1935
 rtsp: no
 webrtc: no
 srt: no
+moq: no
 
 hls: yes
 hlsAddress: :8888
@@ -37,6 +38,23 @@ hlsVariant: mpegts
 hlsSegmentCount: 3
 hlsSegmentDuration: 1s
 hlsAllowOrigins: ["*"]
+
+# Backend gate for the HLS endpoint itself. When set, MediaMTX only serves
+# playlists/segments to requests carrying "Authorization: Bearer <secret>".
+# nginx injects that header on its proxy_pass (see the nginx snippets), so
+# authorised viewers still work transparently - but a direct hit on :8888
+# from anything else is rejected, and MediaMTX's cookieCheck redirect
+# dance (which breaks behind the auth_request proxy: the child playlist
+# comes back 401) is bypassed for Bearer-authenticated requests.
+#
+# The placeholder value below is filled in automatically from your .env's
+# INTEL_WATCHER_HLS_CDN_SECRET by the mediamtx-config helper - it must be
+# the same value used in the nginx `proxy_set_header Authorization` line.
+# It is a DIFFERENT secret from INTEL_WATCHER_MEDIAMTX_SECRET (that one
+# authenticates MediaMTX -> Alliance Auth unpublish calls; this one
+# authenticates nginx -> MediaMTX HLS reads). Generate it separately with
+# `openssl rand -hex 32`.
+hlsCDNSecret: __HLS_CDN_SECRET__
 
 # Every publish attempt (OBS connecting) is validated against Alliance Auth.
 # MediaMTX POSTs JSON {user, password, ip, action, path, protocol, id, ...}
@@ -55,9 +73,10 @@ authHTTPAddress: http://allianceauth_gunicorn:8000/intel-watcher/hooks/publish-a
 paths:
   all:
     # Notify Alliance Auth when a streamer stops, so the page stops showing
-    # them as live. CHANGE_ME is filled in automatically from your .env's
-    # INTEL_WATCHER_MEDIAMTX_SECRET by the mediamtx-config helper container -
-    # it must match the value set in Alliance Auth's local.py.
+    # them as live. The webhook secret placeholder below is filled in
+    # automatically from your .env's INTEL_WATCHER_MEDIAMTX_SECRET by the
+    # mediamtx-config helper container - it must match the value set in
+    # Alliance Auth's local.py.
     #
     # NOTE: the stock bluenviron/mediamtx image is `scratch`-based and has
     # no curl - the compose overlay builds a small alpine+curl image for
@@ -72,6 +91,6 @@ paths:
     # "stream stops but is_live stays True" goes unnoticed.
     runOnUnavailable: >
       curl -sS --max-time 10 -X POST http://allianceauth_gunicorn:8000/intel-watcher/hooks/unpublish/
-      -H "X-Webhook-Secret: CHANGE_ME"
+      -H "X-Webhook-Secret: __WEBHOOK_SECRET__"
       --data-urlencode "path=$MTX_PATH"
       --data-urlencode "source_id=$MTX_SOURCE_ID"

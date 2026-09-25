@@ -12,10 +12,11 @@
 # docker-compose.yml (copy it there from this repo) - relative paths below
 # resolve against the compose project directory.
 #
-# Before running this, put the secret in a `.env` file next to your
-# docker-compose.yml (same value you set for INTEL_WATCHER_MEDIAMTX_SECRET
-# in local.py):
-#   INTEL_WATCHER_MEDIAMTX_SECRET=<output of: openssl rand -hex 32>
+# Before running this, put the two secrets in a `.env` file next to your
+# docker-compose.yml (each generated separately with `openssl rand -hex 32`):
+#   INTEL_WATCHER_MEDIAMTX_SECRET=<same value as in local.py>
+#   INTEL_WATCHER_HLS_CDN_SECRET=<same value as local.py + the nginx Bearer
+#                                 header - see the nginx snippet>
 #
 # IMPORTANT: add `allianceauth_gunicorn` to ALLOWED_HOSTS in local.py.
 # MediaMTX's publish-auth POSTs carry "Host: allianceauth_gunicorn" - if
@@ -43,6 +44,7 @@ services:
     restart: "no"
     environment:
       - INTEL_WATCHER_MEDIAMTX_SECRET=${INTEL_WATCHER_MEDIAMTX_SECRET:?Set INTEL_WATCHER_MEDIAMTX_SECRET in a .env file next to this docker-compose.yml first (same value as in local.py) - see README.md}
+      - INTEL_WATCHER_HLS_CDN_SECRET=${INTEL_WATCHER_HLS_CDN_SECRET:?Set INTEL_WATCHER_HLS_CDN_SECRET in a .env file next to this docker-compose.yml first (openssl rand -hex 32, same value as local.py and the nginx Bearer header) - see README.md}
     volumes:
       - ./deploy/mediamtx-docker.yml:/template/mediamtx.yml:ro
       - ./conf:/out
@@ -50,8 +52,10 @@ services:
       - sh
       - -c
       # Plain-string substitution via awk+ENVIRON - no regex/sed escaping,
-      # so secrets containing &, \, # or quotes can't corrupt the YAML.
-      - awk '{ s=ENVIRON["INTEL_WATCHER_MEDIAMTX_SECRET"]; out=""; rest=$$0; while ((i=index(rest,"CHANGE_ME"))>0){ out=out substr(rest,1,i-1) s; rest=substr(rest,i+9) } print out rest }' /template/mediamtx.yml > /out/mediamtx.yml && echo "Wrote ./conf/mediamtx.yml"
+      # so secrets containing &, \, # or quotes can't corrupt the YAML. Each
+      # distinct placeholder appears only at its intended value position, so
+      # secrets never end up inside comment text in the generated file.
+      - awk '{ s=ENVIRON["INTEL_WATCHER_MEDIAMTX_SECRET"]; c=ENVIRON["INTEL_WATCHER_HLS_CDN_SECRET"]; out=""; rest=$$0; while ((i=index(rest,"__WEBHOOK_SECRET__"))>0){ out=out substr(rest,1,i-1) s; rest=substr(rest,i+18) } while ((i=index(rest,"__HLS_CDN_SECRET__"))>0){ out=out substr(rest,1,i-1) c; rest=substr(rest,i+18) } print out rest }' /template/mediamtx.yml > /out/mediamtx.yml && echo "Wrote ./conf/mediamtx.yml"
 
   mediamtx:
     # NOT the stock image: bluenviron/mediamtx is scratch-based and has no
@@ -61,8 +65,8 @@ services:
       context: ./deploy
       dockerfile: Dockerfile.mediamtx
       args:
-        MEDIAMTX_VERSION: "1.21.0"
-    image: aa-intel-watcher-mediamtx:1.21.0
+        MEDIAMTX_VERSION: "1.21.1"
+    image: aa-intel-watcher-mediamtx:1.21.1
     container_name: mediamtx
     restart: always
     depends_on:

@@ -95,7 +95,10 @@ OBS  ───────────────────►  MediaMTX  ─
 4. nginx reverse-proxies `/hls/` to MediaMTX, but only after an `auth_request`
    sub-check against `/intel-watcher/hls-auth/` - a bare 204/401 endpoint
    requiring `basic_access` - so the video segments themselves are gated, not
-   just the page around them.
+   just the page around them. On the backend request to MediaMTX, nginx also
+   injects a private `Authorization: Bearer` credential matching MediaMTX's
+   `hlsCDNSecret`, so the HLS port itself additionally requires an
+   infrastructure secret the browser never sees.
 5. When the streamer stops, MediaMTX fires the `runOnUnavailable` hook, which
    POSTs to `mediamtx_unpublish` (with a shared secret and the session's
    source ID) and the app flips `is_live = False`. If
@@ -145,10 +148,12 @@ INSTALLED_APPS += ["aa_intel_watcher"]
 ### 3. Add the settings
 
 See [Alliance Auth configuration](#alliance-auth-configuration) for the full
-list. The only required one is the shared webhook secret:
+list. Two secrets protect two different boundaries - generate each separately
+with `openssl rand -hex 32`:
 
 ```python
-INTEL_WATCHER_MEDIAMTX_SECRET = "your-secret-here"  # see Configuration
+INTEL_WATCHER_MEDIAMTX_SECRET = "your-secret-here"    # MediaMTX -> AA unpublish webhook
+INTEL_WATCHER_HLS_CDN_SECRET  = "your-secret-here-2"  # nginx/AA -> MediaMTX HLS Bearer
 ```
 
 ### 4. Run migrations and fetch hls.js
@@ -282,6 +287,7 @@ you use).
 | `INTEL_WATCHER_HLS_BASE_URL` | `"/hls"` | Public base URL where nginx reverse-proxies MediaMTX's HLS output. Only change it if you also change the nginx `location /hls/` block. |
 | `INTEL_WATCHER_RTMP_HOST` | hostname of the current request | Hostname shown to streamers in "Streamer Info" (`rtmp://<host>:1935/live`). **Set this explicitly whenever the Alliance Auth website hostname can't accept RTMP TCP/1935** - typically because it's proxied through a service that only forwards HTTP(S) (Cloudflare, a CDN, a load balancer), or because MediaMTX runs on different infrastructure. See [Two hostnames](#two-hostnames-web-vs-rtmp) below. If left unset, `manage.py check` emits `aa_intel_watcher.W001` and Streamer Info flags the hostname as guessed. |
 | `INTEL_WATCHER_HLS_INTERNAL_URL` | `""` (disabled) | **Recommended.** Internal base URL where *Alliance Auth itself* can reach MediaMTX's HLS port - e.g. `http://127.0.0.1:8888` (bare metal) or `http://mediamtx:8888` (Docker). When set, `api_status` cross-checks `is_live` against MediaMTX and clears streams whose playlist 404s, which self-heals stale "live" tiles after a missed unpublish webhook or a MediaMTX restart. Without it, a stream whose unpublish webhook never lands stays marked live (and on viewers' screens) until manually cleared - see TROUBLESHOOTING.md "Stream stops but the tile stays". |
+| `INTEL_WATCHER_HLS_CDN_SECRET` | `""` (disabled) | **Required when MediaMTX uses `hlsCDNSecret`** (the shipped samples set it). The app's liveness probe bypasses nginx and calls MediaMTX directly, so it sends this value as `Authorization: Bearer <secret>` - without it every probe gets a 401 and the stale-stream fallback silently never clears. Same value as `hlsCDNSecret` in `mediamtx.yml` and the nginx `proxy_set_header Authorization` line. **Different secret from `INTEL_WATCHER_MEDIAMTX_SECRET`**: that one authenticates MediaMTX calling Alliance Auth; this one authenticates nginx/AA calling MediaMTX. Generate separately with `openssl rand -hex 32`. It is backend infrastructure only - browsers never see it. |
 
 ### Two hostnames: web vs RTMP
 
@@ -340,8 +346,11 @@ Pick **one** of the two options below - bare metal or Docker.
    the config uses `runOnUnavailable`, renamed from `runOnNotReady` in
    v1.15) and place it somewhere on your PATH.
 2. Copy [`deploy/mediamtx.yml`](deploy/mediamtx.yml) to
-   `/etc/mediamtx/mediamtx.yml` and replace `CHANGE_ME` with the same value you
-   set for `INTEL_WATCHER_MEDIAMTX_SECRET` in
+   `/etc/mediamtx/mediamtx.yml` and fill in both placeholders: the webhook
+   secret placeholder gets the `INTEL_WATCHER_MEDIAMTX_SECRET` value
+   (unpublish webhook), and the `hlsCDNSecret` placeholder gets the
+   `INTEL_WATCHER_HLS_CDN_SECRET`
+   value - see
    [Alliance Auth configuration](#alliance-auth-configuration). The sample
    already binds HLS to `127.0.0.1:8888` and disables RTSP/WebRTC/SRT; only
    RTMP `:1935` is public-facing, which is what OBS needs.
@@ -351,14 +360,17 @@ Pick **one** of the two options below - bare metal or Docker.
 
 ### Option B - Docker
 
-1. Put your secret in a `.env` file next to your Alliance Auth
-   `docker-compose.yml`:
+1. Put both secrets in a `.env` file next to your Alliance Auth
+   `docker-compose.yml` (generate each separately):
 
    ```
    INTEL_WATCHER_MEDIAMTX_SECRET=<output of: openssl rand -hex 32>
+   INTEL_WATCHER_HLS_CDN_SECRET=<output of: openssl rand -hex 32>
    ```
 
-   (same value as in `local.py`).
+   `INTEL_WATCHER_MEDIAMTX_SECRET` is the same value as in `local.py`;
+   `INTEL_WATCHER_HLS_CDN_SECRET` goes into `local.py` **and** the nginx
+   `Authorization: Bearer` line in the nginx snippet (step: nginx setup).
 2. Copy this repo's `deploy/` directory next to your Alliance Auth
    `docker-compose.yml` (the overlay references `./deploy/...` and
    `./conf/`), then bring it up:
@@ -386,6 +398,21 @@ Pick **one** of the two options below - bare metal or Docker.
    container are on the same docker-compose network so the
    `proxy_pass http://mediamtx:8888/` in the nginx snippet resolves.
 
+   Running MediaMTX as a **separate compose project** (e.g. `aa-docker` for
+   Alliance Auth, `mediamtx` for MediaMTX) works too - both projects just
+   need to join the same external network so the service names resolve:
+
+   ```yaml
+   networks:
+     aa_shared:
+       external: true
+       name: aa-docker_default   # the AA project's compose network
+   ```
+
+   Attach it to the `mediamtx` service; MediaMTX then reaches
+   `allianceauth_gunicorn` (or the `intelwatcher-auth` alias) and nginx
+   reaches `mediamtx` exactly as in the single-project layout.
+
 ## nginx setup
 
 Without this step, anyone with the (guessable) HLS URL could watch without
@@ -399,6 +426,23 @@ site. It uses nginx's `auth_request` to call back into
 204/401) before proxying any segment from MediaMTX. The snippet also
 rewrites MediaMTX's relative HLS redirects (`proxy_redirect`) - without it,
 first-time playback requests 404 on `/live/...` instead of `/hls/live/...`.
+
+There are **two layers** on the HLS path, and they use different
+credentials:
+
+1. `auth_request` → Alliance Auth `hls-auth` decides whether *this user*
+   may watch (`basic_access`). This is the user-facing gate.
+2. `proxy_set_header Authorization "Bearer __HLS_CDN_SECRET__"` is the
+   *backend* credential for MediaMTX's `hlsCDNSecret` - nginx injects it
+   only on the request it forwards to MediaMTX, so browsers never see it.
+   It must be the same value as `INTEL_WATCHER_HLS_CDN_SECRET` (and as the
+   `hlsCDNSecret` the `mediamtx-config` helper writes into
+   `conf/mediamtx.yml`).
+
+Before reloading nginx, replace `__HLS_CDN_SECRET__` in the snippet with
+your generated secret. If it's wrong or left as the placeholder, the
+master playlist can look fine while the child playlist/segments return
+401 and the video buffers forever - see TROUBLESHOOTING.md.
 
 > **Docker gotcha:** `conf/nginx.conf` is bind-mounted as a *single file*.
 > Editing it on the host replaces the inode, which the running container
@@ -425,6 +469,8 @@ item is a different failure stage (see TROUBLESHOOTING.md):
       `127.0.0.1`, or your alias) is in `ALLOWED_HOSTS` - step 6
 - [ ] MediaMTX and `allianceauth_gunicorn` share a Docker network / the
       `authHTTPAddress` hostname resolves
+- [ ] `hlsCDNSecret` in `mediamtx.yml` matches the nginx `Bearer` header
+      and `INTEL_WATCHER_HLS_CDN_SECRET` in `local.py`
 - [ ] The streamer is an active user with `aa_intel_watcher.can_stream`
 
 For members with `can_stream`:
@@ -447,6 +493,26 @@ python manage.py collectstatic
 
 Then restart Alliance Auth (and reload nginx if you changed any of the
 `deploy/` snippets).
+
+**If the update changed application Python code** (e.g. `views.py`), the
+new code has to reach the Alliance Auth runtime - restarting nginx or
+MediaMTX does nothing for that. Bare metal / pip install:
+`pip install --upgrade ...` then restart gunicorn. Vendored Docker image
+(`COPY aa-watcher/aa_intel_watcher ...` in the AA Dockerfile): rebuild and
+recreate `allianceauth_gunicorn`. The HLS CDN-secret probe change in this
+release is exactly that case - it needs no migration, collectstatic, or
+`fetch_hls_js`, just the updated code inside the AA container plus a
+recreate.
+
+Infrastructure-only changes don't need the app rebuilt:
+
+| You changed | Then run |
+| --- | --- |
+| `deploy/mediamtx*.yml`, `.env` secrets | `docker compose -f docker-compose.yml -f deploy/docker-compose.mediamtx.yml up -d` (regenerates `conf/mediamtx.yml` and recreates `mediamtx`) |
+| `conf/nginx.conf` / nginx snippets | `docker compose up -d --force-recreate nginx` (single-file bind mount - see TROUBLESHOOTING Bug 4) |
+| `conf/urls.py`, `local.py` | rebuild/restart `allianceauth_gunicorn` |
+| `Dockerfile.mediamtx` version pin | `docker compose -f docker-compose.yml -f deploy/docker-compose.mediamtx.yml up -d --build mediamtx` |
+| Migrations exist (`migrate` output) | `python manage.py migrate aa_intel_watcher` only then |
 
 ## Uninstall
 

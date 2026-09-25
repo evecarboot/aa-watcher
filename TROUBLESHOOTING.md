@@ -233,8 +233,8 @@ docker compose logs --since=2m allianceauth_gunicorn
 ```
 
 A `403`/`Intel Watcher: denied` means the `X-Webhook-Secret` header doesn't
-match `INTEL_WATCHER_MEDIAMTX_SECRET` (unset on either side, or `CHANGE_ME`
-still in the generated `conf/mediamtx.yml`). A `302` to the login page
+match `INTEL_WATCHER_MEDIAMTX_SECRET` (unset on either side, or a
+placeholder left in the generated `conf/mediamtx.yml`). A `302` to the login page
 means the hook URLs are registered through the app `url_hook` instead of
 the project `urls.py` - curl follows the redirect, sees the login page's
 200 and reports fake success, so nothing is ever cleared. No request at
@@ -439,6 +439,15 @@ uses it. Bonus: `curl --max-time 10` so a hung Alliance Auth can't wedge
 the hook, and `source_id=$MTX_SOURCE_ID` is sent so the app can ignore
 stale callbacks after a fast reconnect (see Bug 8).
 
+**Verify the running image actually has curl:**
+
+```bash
+docker exec mediamtx curl --version
+```
+
+`executable file not found` here means the stock scratch image is running,
+not the curl-capable build.
+
 ## Bug 8 - unpublish races and stale is_live
 
 **Symptom:** streamer reconnects quickly and the page flips them offline
@@ -496,7 +505,14 @@ segment request ran a pointless DB query.
 **Fix:** new `hls_auth` view (registered in the project urls.py next to the
 webhooks) returns bare `204`/`401` with no DB access; both nginx samples
 now point `_auth_check` at `/intel-watcher/hls-auth/` and forward the real
-`Host` header.
+`Host` header. Do NOT point `auth_request` at `/intel-watcher/api/status/`
+- it's login_required (302 -> 500) and does a DB query per segment.
+
+Related: if `/intel-watcher/hls-auth/` was never added to the project
+`urls.py`, the subrequest 404s and nginx logs `auth request unexpected
+status: 404` - HLS requests then 500 the same way. All three direct
+routes (publish-auth, unpublish, hls-auth) must sit above
+`path("", include(urls))` - see `deploy/urls.py`.
 
 ## Bug 12 - publish-auth logged credentials and could 500 on bad input
 
@@ -565,6 +581,74 @@ Applies to any vendored/manual install - the pip-install path can't hit
 this because pip installs with the right ownership. Bare-metal equivalent:
 run `fetch_hls_js` as the same user gunicorn runs as, or `chown -R` the
 package dir.
+
+## Bug 16 - master playlist loads but child playlist/segments return 401
+
+**Symptom:** the video tile renders but buffers forever. Browser DevTools
+shows `index.m3u8` getting a 302/200 while `main_stream.m3u8` (or the
+segments) return `401` - through nginx, even though the same paths succeed
+when curled against MediaMTX directly on the internal network.
+
+**Root cause:** MediaMTX's cookieCheck session flow does not survive this
+proxy topology - the redirect/cookie dance that establishes the HLS
+session gets challenged again on the child playlist, which then 401s.
+Reproduced on MediaMTX 1.21.0 and 1.21.1.
+
+**Fix:** MediaMTX's reverse-proxy/CDN mode. `hlsCDNSecret` in
+`mediamtx.yml` makes MediaMTX require `Authorization: Bearer <secret>` on
+HLS requests; nginx injects that header only on the backend
+`proxy_pass` request (see the `deploy/nginx-intel-watcher-*.conf`
+snippets), so browsers never see it. With the Bearer in place MediaMTX
+serves the playlist directly (200) instead of running the cookieCheck
+dance. The same value must appear in three places:
+
+- `hlsCDNSecret:` in `mediamtx.yml` (from `.env`'s
+  `INTEL_WATCHER_HLS_CDN_SECRET` via the mediamtx-config helper)
+- `proxy_set_header Authorization "Bearer ..."` in the nginx `/hls/` block
+- `INTEL_WATCHER_HLS_CDN_SECRET` in `local.py` (so the app's liveness
+  probe keeps working - it bypasses nginx and calls MediaMTX directly)
+
+Do not reuse `INTEL_WATCHER_MEDIAMTX_SECRET` for this: that secret
+authenticates MediaMTX's unpublish calls *to* Alliance Auth; the CDN
+secret authenticates nginx/AA reads *of* MediaMTX. Different boundary,
+different secret.
+
+**Verify:**
+
+```bash
+docker compose logs nginx          # 401s on /hls/... m3u8?
+# Through nginx (should be 200 when the Bearer matches):
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H "Cookie: <a logged-in session cookie>" \
+  https://<site>/hls/live/<key>/main_stream.m3u8
+# Direct to MediaMTX with the secret (must be 200):
+docker run --rm --network aa-docker_default curlimages/curl \
+  curl -s -o /dev/null -w '%{http_code}\n' \
+  -H "Authorization: Bearer <secret>" \
+  http://mediamtx:8888/live/<key>/main_stream.m3u8
+```
+
+## OBS publishes but the viewer only buffers - deterministic ladder
+
+Check each hop in order; stop at the first failure instead of rebuilding
+anything:
+
+1. `StreamKey.is_live` is `True`? (see the DB check in "Stream stops but
+   the tile stays" - if False, the problem is publish-side, not playback)
+2. MediaMTX is receiving the RTMP stream? (`docker logs mediamtx` shows
+   the publish)
+3. Internal `index.m3u8` returns 200? (`docker run --rm --network
+   aa-docker_default curlimages/curl curl -H "Authorization: Bearer
+   <secret>" -v http://mediamtx:8888/live/<key>/index.m3u8` - with
+   hlsCDNSecret set you need the Bearer even internally)
+4. Internal `main_stream.m3u8` returns 200? (same curl, child playlist)
+5. Through nginx, `index.m3u8` returns 200 with a valid session cookie?
+6. Through nginx, `main_stream.m3u8` returns 200? (fails here but works
+   internally -> Bug 16: missing/mismatched `hlsCDNSecret`/Bearer)
+7. `/intel-watcher/hls-auth/` is registered in the project `urls.py`?
+   (missing -> nginx logs `auth request unexpected status: 404` and every
+   HLS request becomes a 500 - Bug 11 family)
+8. `hlsCDNSecret` == nginx `Bearer` == `INTEL_WATCHER_HLS_CDN_SECRET`?
 
 ## General debugging techniques that worked well
 

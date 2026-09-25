@@ -9,7 +9,7 @@
 # MediaMTX version (bump MEDIAMTX_VERSION deliberately, after checking
 # https://github.com/bluenviron/mediamtx/releases for config changes).
 
-ARG MEDIAMTX_VERSION=1.21.0
+ARG MEDIAMTX_VERSION=1.21.1
 FROM bluenviron/mediamtx:${MEDIAMTX_VERSION} AS mediamtx
 
 FROM alpine:3.20

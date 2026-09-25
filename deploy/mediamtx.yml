@@ -21,6 +21,7 @@ rtmpAddress: :1935
 rtsp: no
 webrtc: no
 srt: no
+moq: no
 
 hls: yes
 # localhost only - nginx (not browsers) talks to MediaMTX directly.
@@ -30,6 +31,25 @@ hlsVariant: mpegts
 hlsSegmentCount: 3
 hlsSegmentDuration: 1s
 hlsAllowOrigins: ["*"]
+
+# Backend gate for the HLS endpoint itself. When set, MediaMTX only serves
+# playlists/segments to requests carrying "Authorization: Bearer <secret>".
+# nginx injects that header on its proxy_pass (see
+# nginx-intel-watcher.conf), so authorised viewers still work
+# transparently - but a direct hit on :8888 is rejected, and MediaMTX's
+# cookieCheck redirect dance (which breaks behind the auth_request proxy:
+# the child playlist comes back 401) is bypassed for Bearer-authenticated
+# requests.
+#
+# Replace the placeholder below with a dedicated secret
+# (openssl rand -hex 32) and use the SAME value in the nginx
+# `proxy_set_header Authorization`
+# line and in local.py's INTEL_WATCHER_HLS_CDN_SECRET (so the app's
+# liveness probe keeps working). It is a DIFFERENT secret from
+# INTEL_WATCHER_MEDIAMTX_SECRET - that one authenticates MediaMTX ->
+# Alliance Auth unpublish calls; this one authenticates nginx -> MediaMTX
+# HLS reads.
+hlsCDNSecret: __HLS_CDN_SECRET__
 
 # Every publish attempt (OBS connecting) is validated against Alliance Auth.
 # MediaMTX POSTs JSON {user, password, ip, action, path, protocol, id, ...}
@@ -45,8 +65,9 @@ authHTTPAddress: http://127.0.0.1:8000/intel-watcher/hooks/publish-auth/
 paths:
   all:
     # Notify Alliance Auth when a streamer stops, so the page stops showing
-    # them as live. Replace CHANGE_ME with the value you set for
-    # INTEL_WATCHER_MEDIAMTX_SECRET in Alliance Auth's local settings.
+    # them as live. Replace the webhook secret placeholder below with the
+    # value you set for INTEL_WATCHER_MEDIAMTX_SECRET in Alliance Auth's
+    # local settings.
     #
     # Requires curl on the host (present on any normal Linux install - the
     # stock Docker image is scratch and has NO curl, see
@@ -61,6 +82,6 @@ paths:
     # "stream stops but is_live stays True" goes unnoticed.
     runOnUnavailable: >
       curl -sS --max-time 10 -X POST http://127.0.0.1:8000/intel-watcher/hooks/unpublish/
-      -H "X-Webhook-Secret: CHANGE_ME"
+      -H "X-Webhook-Secret: __WEBHOOK_SECRET__"
       --data-urlencode "path=$MTX_PATH"
       --data-urlencode "source_id=$MTX_SOURCE_ID"

@@ -49,6 +49,10 @@ def _hls_internal_url():
     return getattr(settings, "INTEL_WATCHER_HLS_INTERNAL_URL", "").rstrip("/")
 
 
+def _hls_cdn_secret():
+    return getattr(settings, "INTEL_WATCHER_HLS_CDN_SECRET", "")
+
+
 @login_required
 @permission_required("aa_intel_watcher.basic_access", raise_exception=True)
 def index(request):
@@ -108,12 +112,21 @@ def _probe_hls_stream(stream):
     """
     url = f"{_hls_internal_url()}/{stream.active_path_name}/index.m3u8"
 
+    # MediaMTX deployments front HLS with hlsCDNSecret: nginx injects the
+    # Bearer for browser traffic, but this probe bypasses nginx and must
+    # present the same backend secret itself or every request fails auth
+    # and the check stays inconclusive forever.
+    cdn_secret = _hls_cdn_secret()
+    request = urllib.request.Request(url)
+    if cdn_secret:
+        request.add_header("Authorization", f"Bearer {cdn_secret}")
+
     cookie_jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(
         urllib.request.HTTPCookieProcessor(cookie_jar)
     )
     try:
-        opener.open(url, timeout=2.5)
+        opener.open(request, timeout=2.5)
         return True
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
