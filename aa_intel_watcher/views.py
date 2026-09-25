@@ -1,3 +1,4 @@
+import http.cookiejar
 import json
 import logging
 import secrets
@@ -96,27 +97,30 @@ def streamer_info(request):
 def _probe_hls_stream(stream):
     """Check whether MediaMTX is still serving this stream's playlist.
 
-    Returns True if the stream is definitely there, False if it is
-    definitely gone (404), and None if the check was inconclusive
-    (MediaMTX unreachable, timed out, redirect loop, ...) - in that case
-    the recorded state is kept, so transient errors never flap streams.
+    MediaMTX answers the first playlist request with a 302 back to itself
+    carrying a cookieCheck query plus a Set-Cookie - it does this for live
+    AND dead paths, so the redirect alone proves nothing. We follow it with
+    a cookie jar and judge only the final response: a successful playlist
+    response means the stream exists, a final 404 means it is gone, and
+    anything else (other HTTP status, unreachable host, timeout, redirect
+    loop) is inconclusive - return None so the recorded state is kept and
+    transient errors never flap streams.
     """
     url = f"{_hls_internal_url()}/{stream.active_path_name}/index.m3u8"
 
-    class _NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, *args, **kwargs):
-            return None
-
-    opener = urllib.request.build_opener(_NoRedirect)
+    cookie_jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(cookie_jar)
+    )
     try:
         opener.open(url, timeout=2.5)
         return True
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return False
-        # Redirects (e.g. MediaMTX's cookieCheck) and any other status mean
-        # the path exists - count it as alive.
-        return True
+        # Other statuses (5xx, anything unexpected after the cookie flow)
+        # prove neither liveness nor absence.
+        return None
     except (urllib.error.URLError, OSError):
         return None
 

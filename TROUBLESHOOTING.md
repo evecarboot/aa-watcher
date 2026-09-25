@@ -531,6 +531,15 @@ metal, `http://mediamtx:8888` Docker) and `api_status` will probe each live
 stream's playlist - a definitive 404 (with a 15s grace period after
 publish) clears `is_live`. Unreachable MediaMTX never flips state.
 
+Note the probe must handle MediaMTX's cookieCheck session flow: the first
+request to a playlist returns `302` to the same URL with `?cookieCheck=1`
+and a `Set-Cookie` - for live *and* dead paths, so the redirect itself
+proves nothing either way. The probe follows that redirect with a cookie
+jar and only clears the stream when the **final** MediaMTX response is a
+404; a final playlist response means the stream is really there, and any
+other outcome (5xx, unreachable, timeout, redirect loop) is treated as
+inconclusive and never flips state.
+
 ## Bug 15 - `fetch_hls_js` PermissionError in a vendored Docker install
 
 **Symptom:** `python manage.py fetch_hls_js --force` (and later
